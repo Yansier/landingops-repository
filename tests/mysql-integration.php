@@ -11,9 +11,12 @@ use LandingOps\ControlPlane\Database\DatabaseConfig;
 use LandingOps\ControlPlane\Database\MigrationRunner;
 use LandingOps\ControlPlane\Database\PdoFactory;
 use LandingOps\ControlPlane\Exception\ApiException;
+use LandingOps\ControlPlane\Http\ControlPlaneKernel;
+use LandingOps\ControlPlane\Http\Request;
 use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Security\AeadSecretCipher;
 use LandingOps\ControlPlane\Service\BaotaConfigService;
+use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\DeploymentDryRunService;
@@ -691,12 +694,33 @@ try {
             (int) $pdo->query('SELECT COUNT(*) FROM deployment_jobs')->fetchColumn(),
             (int) $pdo->query('SELECT COUNT(*) FROM job_steps')->fetchColumn(),
         ];
-        $dryRun = (new DeploymentDryRunService($repository))->run($adminA, [
+        $dryRunInput = [
             'template_version_id' => (string) $uploaded['template_version_id'],
             'primary_domain_id' => (string) $managedDomain['id'],
             'subdomain_prefix' => 'dry-run',
             'config' => json_decode(json_encode(\LandingOps\Tests\FixtureFactory::sampleConfig(), JSON_THROW_ON_ERROR), true, 128, JSON_THROW_ON_ERROR),
-        ]);
+        ];
+        $apiSessions = new SessionService($repository);
+        $apiLogin = $apiSessions->login($staffEmail, $passwordText, 'mysql-dry-run', '127.0.0.1', 'mysql-dry-run-login');
+        $authorization = new AuthorizationService();
+        $kernel = new ControlPlaneKernel(
+            $apiSessions,
+            new AccountService($repository, $authorization),
+            new ResourceAccessService($repository, $authorization),
+            new OwnershipTransferService($repository, $authorization),
+            dryRuns: new DeploymentDryRunService($repository),
+        );
+        $apiCookies = [ControlPlaneKernel::COOKIE => $apiLogin->cookieToken];
+        $configFormResponse = $kernel->handle(new Request(
+            'GET', '/api/v1/template-versions/' . $uploaded['template_version_id'] . '/config-form', [], $apiCookies,
+        ));
+        integrationAssert($configFormResponse->status === 200, '真实 PDO 配置表单 API 往返失败。');
+        $dryRunResponse = $kernel->handle(new Request(
+            'POST', '/api/v1/deployment-dry-runs', ['X-CSRF-Token' => $apiLogin->csrfToken],
+            $apiCookies, $dryRunInput,
+        ));
+        integrationAssert($dryRunResponse->status === 200, '真实 PDO Dry Run API 往返失败。');
+        $dryRun = $dryRunResponse->body['data'];
         integrationAssert($dryRun['dry_run'] === true && $dryRun['mutations_performed'] === false, '真实 PDO Dry Run 错误地报告外部写入。');
         integrationAssert($dryRun['configuration']['valid'] === true, '真实 PDO Dry Run 配置校验失败。');
         integrationAssert($dryRunBefore === [

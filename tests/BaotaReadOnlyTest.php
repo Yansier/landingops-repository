@@ -17,6 +17,7 @@ use LandingOps\ControlPlane\Http\ControlPlaneKernel;
 use LandingOps\ControlPlane\Http\Request;
 use LandingOps\ControlPlane\Security\AeadSecretCipher;
 use LandingOps\ControlPlane\Service\BaotaConfigService;
+use LandingOps\ControlPlane\Service\BaotaCompatibilityDiagnostic;
 use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
@@ -120,6 +121,23 @@ function baotaFixture(): array
 
 /** @return array<string,\Closure> */
 return [
+    'baota compatibility diagnostic is bounded sanitized and blocks incomplete detail evidence' => static function (): void {
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 21; $i++) {
+            $gateway->siteRows[] = [
+                'external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}",
+                'status' => '1', 'metadata_complete' => true,
+            ];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $report = (new BaotaCompatibilityDiagnostic($gateway))->run('https://panel.example.test:8888', 'never-output-this-key');
+        TestHarness::assertSame('needs_attention', $report['classification']);
+        TestHarness::assertSame(20, $report['sites']['detail_queries_used']);
+        TestHarness::assertFalse($report['sites']['details_complete']);
+        TestHarness::assertFalse($report['write_operations_performed']);
+        TestHarness::assertNotContains('never-output-this-key', json_encode($report, JSON_THROW_ON_ERROR));
+    },
+
     'baota client uses only documented read only actions and paginates sites' => static function (): void {
         putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
         $firstPage = [];

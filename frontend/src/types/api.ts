@@ -233,8 +233,16 @@ export interface ConfigFormField {
   label: string
   description?: string
   type: 'string'|'number'|'integer'|'boolean'|'array'
-  item_type?: string
+  item_type?: 'string'|'number'|'integer'|'boolean'
+  item_enum?: unknown[]
+  item_pattern?: string
+  item_minimum?: number
+  item_maximum?: number
+  item_min_length?: number
+  item_max_length?: number
   required: boolean
+  conditionally_required?: boolean
+  optional_ancestors?: string[]
   nullable: boolean
   visibility: 'public'|'private'
   format?: string
@@ -246,6 +254,7 @@ export interface ConfigFormField {
   min_items?: number
   max_items?: number
   enum?: unknown[]
+  default?: unknown
 }
 export interface ConfigFormContract { template_version_id: string; schema_hash: string; fields: ConfigFormField[] }
 export interface DryRunIssue { code: string; message: string }

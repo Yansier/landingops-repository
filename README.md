@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1I（单站创建预演与部署计划）**。用户可从当前授权范围选择不可变模板版本和主域名，按 LTS v1.0 Schema 编辑配置并生成结构化 Dry Run。预演会重新读取服务端权限与资源状态，但不会创建实例、预留、任务、DNS、宝塔站点、SSL 或生产文件。
+> 当前状态：**Phase 1J（配置向导完善与只读兼容性验收）**。动态表单严格区分省略、null、数字、整数、布尔与标量数组；不支持的 Schema 结构会显式拒绝。提供默认不运行的宝塔/Cloudflare 脱敏只读诊断入口，Dry Run 仍不会创建实例、预留、任务、DNS、宝塔站点、SSL 或生产文件。
 
 ## 最重要的边界
 
@@ -33,6 +33,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1G 只读验证](docs/PHASE_1G.md) | Cloudflare Token/Zone/DNS Read 验证、DNS 预检查和安全边界 |
 | [Phase 1H 宝塔只读预检查](docs/PHASE_1H.md) | 单宝塔密文配置、官方只读白名单、外部站点保护和隔离能力检查 |
 | [Phase 1I 单站部署预演](docs/PHASE_1I.md) | 四步向导、Schema 表单、服务端 Dry Run、读预算与零写入部署计划 |
+| [Phase 1J 配置与只读验收](docs/PHASE_1J.md) | 严格表单转换、显式不支持错误、脱敏只读诊断和真实 PDO 往返 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -55,11 +56,12 @@ database/migrations/   # MySQL 8 / MariaDB 10.6+ 版本化迁移
 public/index.php       # Phase 1C JSON API 前端控制器
 bin/landingops         # validate / package-sample / build CLI
 bin/landingops-control # migrate / bootstrap-admin CLI
+bin/landingops-readonly-diagnostic # 明确授权后运行的宝塔/Cloudflare 只读诊断
 examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)，Phase 1J 收尾见 [Phase 1J 说明](docs/PHASE_1J.md)。
 
 ## 安全提示
 

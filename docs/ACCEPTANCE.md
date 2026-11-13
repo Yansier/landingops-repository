@@ -157,7 +157,22 @@ Phase 1A/1A.1 的直接验收对象是文档与契约的一致性。下列 V1 �
 | PERM-05 P0 | 宝塔无法提供独立 PHP 用户/FPM pool或等价隔离 | 只允许静态站点；原生后台和供应商 PHP 保持禁用 |
 | PERM-06 P0 | 构造 current 指向本站外、跨文件系统或未知 symlink | realpath/lstat、marker 和设备号校验拒绝，活动指针不变 |
 
-## 13. 验收退出条件
+## 13. Phase 1J 配置与只读诊断
+
+| 编号 | 场景 | 预期 |
+| --- | --- | --- |
+| CFG-01 P0 | nullable number 未填写或 URL 填写后恢复为空 | canonical 值为 `null`，不变成 `0` 或空字符串 |
+| CFG-02 P0 | integer 输入 `1.2`、`12abc` 或超安全范围 | 前端拒绝且不截断；后端 Schema 仍是最终校验边界 |
+| CFG-03 P0 | 可选字段未启用 | 字段从请求配置中完全省略；必填字段不可省略 |
+| CFG-04 P0 | string/number/integer/boolean 数组 | 每项严格按 `items.type` 转换，非法项目明确报错 |
+| CFG-05 P0 | Schema 含对象数组、动态对象或未支持组合 | 返回 `422 config_form_schema_unsupported`，不得静默遗漏 |
+| CFG-06 P0 | Dry Run 含 private 值 | API 只返回摘要，公开投影与响应都不出现该值 |
+| DIAG-01 P0 | 宝塔清单或详情超预算/失败/缺根目录字段 | 报告 `needs_attention`，不得声称兼容或无冲突 |
+| DIAG-02 P0 | Cloudflare Token/Zone/Account 不匹配或 401/403/429/超时 | 返回脱敏明确错误，不执行 DNS 写入 |
+| DIAG-03 P0 | 运行真实诊断 | 凭据仅从私有环境输入，输出不含 Token、Key、签名、密文或 DNS content |
+| DRY-01 P0 | 真实 MariaDB API 往返执行配置表单与 Dry Run | Cookie/CSRF/PDO 成功；实例、预留、任务和步骤计数不变，测试数据回滚 |
+
+## 14. 验收退出条件
 
 - 所有 P0 通过；P1 无未评估的高风险失败。
 - 任务幂等、DNS/宝塔保护、配置冲突和独立性必须有自动化或隔离集成测试证据。

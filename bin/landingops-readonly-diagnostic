@@ -1,0 +1,51 @@
+<?php
+
+declare(strict_types=1);
+
+use LandingOps\ControlPlane\Baota\BaotaReadOnlyClient;
+use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
+use LandingOps\ControlPlane\Service\BaotaCompatibilityDiagnostic;
+use LandingOps\ControlPlane\Service\CloudflareCompatibilityDiagnostic;
+
+$root = dirname(__DIR__);
+require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
+
+function diagnosticEnv(string $name): string
+{
+    $value = getenv($name);
+    if (!is_string($value) || trim($value) === '') {
+        throw new RuntimeException("缺少私有环境变量 {$name}。");
+    }
+    return trim($value);
+}
+
+function diagnosticOutput(array $result): never
+{
+    fwrite(STDOUT, json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL);
+    exit(($result['classification'] ?? 'failed') === 'failed' ? 1 : 0);
+}
+
+$command = $argv[1] ?? null;
+try {
+    if ($command === 'baota' && count($argv) === 2) {
+        diagnosticOutput((new BaotaCompatibilityDiagnostic(new BaotaReadOnlyClient()))->run(
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_BAOTA_BASE_URL'),
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_BAOTA_API_KEY'),
+        ));
+    }
+    if ($command === 'cloudflare' && count($argv) === 2) {
+        $account = getenv('LANDINGOPS_DIAGNOSTIC_CF_ACCOUNT_ID');
+        diagnosticOutput((new CloudflareCompatibilityDiagnostic(new CloudflareReadOnlyClient()))->run(
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_CF_TOKEN'),
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_CF_ZONE_ID'),
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_CF_ZONE_NAME'),
+            is_string($account) && trim($account) !== '' ? trim($account) : null,
+            diagnosticEnv('LANDINGOPS_DIAGNOSTIC_CF_HOSTNAME'),
+        ));
+    }
+    fwrite(STDERR, "Usage: php bin/landingops-readonly-diagnostic baota|cloudflare\nSecrets are accepted only through documented private environment variables.\n");
+    exit(2);
+} catch (Throwable $exception) {
+    fwrite(STDERR, 'ERROR: ' . $exception->getMessage() . PHP_EOL);
+    exit(1);
+}

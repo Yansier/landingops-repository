@@ -9,6 +9,7 @@ use LandingOps\ControlPlane\Cloudflare\CloudflareHttpTransport;
 use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
 use LandingOps\ControlPlane\Cloudflare\CloudflareTransportException;
 use LandingOps\ControlPlane\Exception\ApiException;
+use LandingOps\ControlPlane\Service\CloudflareCompatibilityDiagnostic;
 
 final class FakeCloudflareTransport implements CloudflareHttpTransport
 {
@@ -43,6 +44,24 @@ function cfResponse(int $status, array $payload = []): CloudflareHttpResponse
 
 /** @return array<string,\Closure> */
 return [
+    'cloudflare compatibility diagnostic checks exact wildcard and apex without exposing secrets' => static function (): void {
+        $transport = new FakeCloudflareTransport(
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'example.com', 'status' => 'active', 'account' => ['id' => 'acct_1']]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'wild_1', 'type' => 'A', 'name' => '*.example.com', 'content' => '203.0.113.1', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'ns_1', 'type' => 'NS', 'name' => 'example.com', 'content' => 'ns.example.net', 'proxied' => null, 'ttl' => 3600]], 'result_info' => ['total_pages' => 1]]),
+        );
+        $report = (new CloudflareCompatibilityDiagnostic(new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {})))
+            ->run('never-output-this-token', 'zone_1', 'example.com', 'acct_1', 'www.example.com');
+        TestHarness::assertSame('verified_read_only', $report['classification']);
+        TestHarness::assertSame(1, $report['dns_read']['wildcard_exact_record_count']);
+        TestHarness::assertSame(1, $report['dns_read']['apex_ns_record_count']);
+        TestHarness::assertFalse($report['write_operations_performed']);
+        TestHarness::assertNotContains('never-output-this-token', json_encode($report, JSON_THROW_ON_ERROR));
+        TestHarness::assertSame(5, count($transport->paths));
+    },
+
     'cloudflare read only client verifies token zone and exact dns path' => static function (): void {
         $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),

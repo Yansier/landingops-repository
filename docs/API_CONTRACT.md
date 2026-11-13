@@ -235,7 +235,9 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 
 ## 模板配置表单
 
-`GET /api/v1/template-versions/{version_id}/config-form` 对三个有效角色开放，但只返回当前用户有权使用且验证有效的不可变模板版本。响应字段由受验证的 LTS v1.0 `config.schema.json` 生成，包含 `schema_hash` 与叶子字段的 `path`、类型、约束、必填、nullable 和 `public|private` 可见性。接口不返回实例配置值；私有字段可以由授权用户填写，但只能进入未来私有配置，不能进入公开 JavaScript 投影。
+`GET /api/v1/template-versions/{version_id}/config-form` 对三个有效角色开放，但只返回当前用户有权使用且验证有效的不可变模板版本。响应字段由受验证的 LTS v1.0 `config.schema.json` 生成，包含 `schema_hash` 与叶子字段的 `path`、类型、数组 `item_type`/`item_enum`、约束、必填或条件必填、nullable、可选 default 和 `public|private` 可见性。接口不返回实例配置值；私有字段可以由授权用户填写，但只能进入未来私有配置，不能进入公开 JavaScript 投影。
+
+表单只支持显式对象属性、标量叶子、标量数组及受限 nullable `oneOf`。对象数组、动态对象、组合/条件/tuple Schema 等当前无法可靠渲染的结构返回 `422 config_form_schema_unsupported`，并提供 Schema 路径和非敏感原因；不得静默遗漏。客户端必须区分“字段省略”和 `null`，不得将空 nullable number 转成 `0`，整数不得截断，数组项目必须按 `items.type` 转换。后端数据库 Schema 校验始终是最终边界。
 
 ## 创建部署预演
 
@@ -257,3 +259,7 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 ## 宝塔清单完整性
 
 `GET /api/v1/settings/baota/sites` 的 `data` 从列表改为 `{sites, inventory}`。`inventory.complete=false` 时同时给出 `reason`、分页数量、站点上限、详情预算、已用详情次数和失败数。任何基于不完整清单的“未发现占用”只能返回 `unsupported` 或 `needs_attention`，不能返回 clear。
+
+# Phase 1J 真实只读诊断边界
+
+`bin/landingops-readonly-diagnostic` 是运维侧 CLI，不是浏览器 API。宝塔目标必须同时出现在 `LANDINGOPS_BAOTA_ALLOWED_BASE_URLS`，只允许现有 `/system`、`/data`、`/site` 固定动作；Cloudflare origin 固定为官方 API。密钥只通过私有环境变量提供，报告只返回状态、计数、类型和错误码，不返回密钥、签名、密文、DNS content 或原始响应。该入口没有写操作，也不能接受任意 URL/路径。

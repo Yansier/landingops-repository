@@ -10,6 +10,7 @@ use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Http\ControlPlaneKernel;
 use LandingOps\ControlPlane\Http\Request;
 use LandingOps\ControlPlane\Service\AccountService;
+use LandingOps\ControlPlane\Service\ConfigFormSchemaBuilder;
 use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
@@ -153,5 +154,32 @@ return [
         ));
         TestHarness::assertSame(200, $response->status);
         TestHarness::assertFalse($response->body['data']['mutations_performed']);
+    },
+
+    'config form builder preserves optional ancestry and scalar array item types' => static function (): void {
+        $schema = json_decode('{"type":"object","additionalProperties":false,"properties":{"optional_group":{"type":"object","additionalProperties":false,"required":["count"],"properties":{"count":{"type":"integer"},"flags":{"type":"array","items":{"type":"boolean","enum":[true,false]}}}}}}', false, 32, JSON_THROW_ON_ERROR);
+        $form = (new ConfigFormSchemaBuilder())->build($schema);
+        $byPath = array_column($form['fields'], null, 'path');
+        TestHarness::assertFalse($byPath['optional_group.count']['required']);
+        TestHarness::assertTrue($byPath['optional_group.count']['conditionally_required']);
+        TestHarness::assertSame(['optional_group'], $byPath['optional_group.count']['optional_ancestors']);
+        TestHarness::assertSame('boolean', $byPath['optional_group.flags']['item_type']);
+        TestHarness::assertSame([true, false], $byPath['optional_group.flags']['item_enum']);
+    },
+
+    'config form builder rejects unsupported structures instead of silently omitting them' => static function (): void {
+        $builder = new ConfigFormSchemaBuilder();
+        foreach ([
+            '{"type":"object","additionalProperties":false,"properties":{"items":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{}}}}}',
+            '{"type":"object","additionalProperties":false,"properties":{"choice":{"oneOf":[{"type":"string"},{"type":"number"}]}}}',
+            '{"type":"object","additionalProperties":false,"properties":{"mixed":{"type":"string","oneOf":[{"type":"null"},{"type":"string"}]}}}',
+            '{"type":"object","additionalProperties":false,"properties":{"dynamic":{"type":"object"}}}',
+        ] as $json) {
+            $error = TestHarness::assertThrows(
+                static fn () => $builder->build(json_decode($json, false, 32, JSON_THROW_ON_ERROR)),
+                ApiException::class,
+            );
+            TestHarness::assertSame('config_form_schema_unsupported', $error->errorCode);
+        }
     },
 ];
