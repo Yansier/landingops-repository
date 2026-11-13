@@ -42,6 +42,22 @@ interface ControlPlaneRepository
     public function insertOwnerHistory(array $history): void;
     /** @return array<string,mixed>|null */
     public function findTemplateVersionAuthorization(string $templateVersionId): ?array;
+    /** @return array<string,mixed>|null */
+    public function findTemplateBySlug(string $slug): ?array;
+    /** @return array<string,mixed>|null */
+    public function findTemplateVersionByHash(string $sha256): ?array;
+    /** @return array<string,mixed>|null */
+    public function findTemplateVersionByTemplateAndVersion(string $templateId, string $version): ?array;
+    /** @param array<string,mixed> $template */
+    public function insertTemplate(array $template): void;
+    /** @param array<string,mixed> $version */
+    public function insertTemplateVersion(array $version): void;
+    /** @return list<array<string,mixed>> */
+    public function listTemplateVersions(?string $teamId): array;
+    /** @return array<string,mixed>|null */
+    public function findTemplateVersionDetail(string $templateVersionId, ?string $teamId): ?array;
+    /** @return list<array<string,mixed>> */
+    public function listTemplateGrants(string $templateVersionId): array;
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool;
     /** @param array<string,mixed> $grant */
     public function createTemplateGrant(array $grant): bool;

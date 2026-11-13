@@ -194,6 +194,8 @@ V1 保守默认：只创建指向已确认服务器公网 IPv4 的 `A` 记录，
 
 每个含 PHP 的实例必须使用独立 Unix 用户/FPM pool和实例级 ACL，并把 `open_basedir` 限定在本站 releases/staging/tmp。本站用户只可创建自己的 staging 和切换自己的 current；active release 只读。`open_basedir` 只是纵深防御，不能替代 POSIX 所有权和目录遍历权限。如果宝塔真实环境无法提供等价隔离，则只允许不执行服务器端模板代码的静态站点，原生后台和供应商 PHP 组件保持禁用。
 
+Phase 1E 默认把模板库存放在项目 `var/private/templates`，生产应通过 `LANDINGOPS_TEMPLATE_STORAGE_DIR` 指向 Web Root 外的专用绝对路径，并在文件系统挂载层设置 `noexec`。Nginx 不得为该目录配置 location 或 alias；PHP 只读 ZIP 进行验证，不从模板库执行任何 PHP 文件。
+
 ## 10. 站点独立性测试设计
 
 在隔离测试环境完成一次部署后：

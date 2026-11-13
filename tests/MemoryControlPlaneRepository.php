@@ -26,6 +26,8 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
     /** @var list<array<string,mixed>> */
     public array $audits = [];
     /** @var array<string,array<string,mixed>> */
+    public array $templates = [];
+    /** @var array<string,array<string,mixed>> */
     public array $templateVersions = [];
     /** @var array<string,array<string,mixed>> */
     public array $templateGrants = [];
@@ -41,6 +43,7 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
             $this->instances,
             $this->ownerHistory,
             $this->audits,
+            $this->templates,
             $this->templateVersions,
             $this->templateGrants,
             $this->domainGrants,
@@ -55,6 +58,7 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
                 $this->instances,
                 $this->ownerHistory,
                 $this->audits,
+                $this->templates,
                 $this->templateVersions,
                 $this->templateGrants,
                 $this->domainGrants,
@@ -228,6 +232,125 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
     public function findTemplateVersionAuthorization(string $templateVersionId): ?array
     {
         return $this->templateVersions[$templateVersionId] ?? null;
+    }
+
+    public function findTemplateBySlug(string $slug): ?array
+    {
+        foreach ($this->templates as $template) {
+            if (($template['slug'] ?? null) === $slug) {
+                return $template;
+            }
+        }
+        return null;
+    }
+
+    public function findTemplateVersionByHash(string $sha256): ?array
+    {
+        foreach ($this->templateVersions as $version) {
+            if (($version['zip_sha256'] ?? null) === $sha256) {
+                return $version;
+            }
+        }
+        return null;
+    }
+
+    public function findTemplateVersionByTemplateAndVersion(string $templateId, string $version): ?array
+    {
+        foreach ($this->templateVersions as $row) {
+            if (($row['template_id'] ?? null) === $templateId && ($row['version'] ?? null) === $version) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    public function insertTemplate(array $template): void
+    {
+        if ($this->findTemplateBySlug((string) $template['slug']) !== null) {
+            throw new RuntimeException('duplicate template slug');
+        }
+        $this->templates[(string) $template['id']] = $template;
+    }
+
+    public function insertTemplateVersion(array $version): void
+    {
+        if ($this->findTemplateVersionByHash((string) $version['zip_sha256']) !== null
+            || $this->findTemplateVersionByTemplateAndVersion((string) $version['template_id'], (string) $version['version']) !== null
+        ) {
+            throw new RuntimeException('duplicate template version');
+        }
+        $template = $this->templates[(string) $version['template_id']] ?? [];
+        $this->templateVersions[(string) $version['id']] = $version + [
+            'owner_team_id' => $template['owner_team_id'] ?? null,
+            'template_status' => $template['status'] ?? null,
+        ];
+    }
+
+    public function listTemplateVersions(?string $teamId): array
+    {
+        $rows = [];
+        foreach ($this->templateVersions as $version) {
+            if (($version['validation_status'] ?? null) !== 'valid') {
+                continue;
+            }
+            if ($teamId !== null && !$this->hasTemplateGrant((string) $version['id'], $teamId)) {
+                continue;
+            }
+            $template = $this->templates[(string) $version['template_id']] ?? null;
+            if ($template === null || ($template['status'] ?? null) !== 'active') {
+                continue;
+            }
+            $creator = $this->users[(string) $template['created_by_user_id']] ?? [];
+            $uploader = $this->users[(string) $version['uploaded_by_user_id']] ?? [];
+            $ownerTeam = $template['owner_team_id'] === null ? null : ($this->teams[(string) $template['owner_team_id']] ?? []);
+            $rows[] = $version + [
+                'template_id' => $template['id'],
+                'slug' => $template['slug'],
+                'template_name' => $template['name'],
+                'description' => $template['description'],
+                'owner_team_id' => $template['owner_team_id'],
+                'owner_team_name' => $ownerTeam['name'] ?? null,
+                'created_by_user_id' => $template['created_by_user_id'],
+                'creator_name' => $creator['display_name'] ?? '',
+                'template_status' => $template['status'],
+                'template_created_at' => $template['created_at'],
+                'version_id' => $version['id'],
+                'uploader_name' => $uploader['display_name'] ?? '',
+                'version_created_at' => $version['created_at'],
+            ];
+        }
+        return $rows;
+    }
+
+    public function findTemplateVersionDetail(string $templateVersionId, ?string $teamId): ?array
+    {
+        $version = $this->templateVersions[$templateVersionId] ?? null;
+        if ($version === null || ($version['validation_status'] ?? null) !== 'valid') {
+            return null;
+        }
+        if ($teamId !== null && !$this->hasTemplateGrant($templateVersionId, $teamId)) {
+            return null;
+        }
+        return $version;
+    }
+
+    public function listTemplateGrants(string $templateVersionId): array
+    {
+        $rows = [];
+        foreach ($this->templateGrants as $grant) {
+            if (($grant['template_version_id'] ?? null) !== $templateVersionId) {
+                continue;
+            }
+            $team = $this->teams[(string) $grant['team_id']] ?? [];
+            $rows[] = [
+                'team_id' => $grant['team_id'],
+                'team_name' => $team['name'] ?? '',
+                'status' => $grant['status'],
+                'granted_at' => $grant['granted_at'],
+                'revoked_at' => $grant['revoked_at'] ?? null,
+            ];
+        }
+        return $rows;
     }
 
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool

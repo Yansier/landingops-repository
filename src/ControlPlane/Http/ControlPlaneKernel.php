@@ -11,6 +11,9 @@ use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
+use LandingOps\ControlPlane\Service\TemplateGrantService;
+use LandingOps\ControlPlane\Service\TemplateManagementService;
+use LandingOps\ControlPlane\Template\UploadedTemplateFile;
 use Throwable;
 
 final class ControlPlaneKernel
@@ -23,6 +26,8 @@ final class ControlPlaneKernel
         private readonly ResourceAccessService $resources,
         private readonly OwnershipTransferService $transfers,
         private readonly RequestId $requestIds = new RequestId(),
+        private readonly ?TemplateManagementService $templates = null,
+        private readonly ?TemplateGrantService $templateGrants = null,
     ) {
     }
 
@@ -163,7 +168,55 @@ final class ControlPlaneKernel
             ), $requestId);
         }
 
-        foreach (['/api/v1/templates', '/api/v1/primary-domains', '/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
+        if ($method === 'GET' && $path === '/api/v1/templates') {
+            return $this->list($this->templateManagement()->list($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/templates/uploads') {
+            $this->csrf($request, $session);
+            if (count($request->files) !== 1 || !isset($request->files['template_zip'])) {
+                throw new ApiException(422, 'template_upload_count', '每次请求必须且只能上传一个 template_zip。');
+            }
+            $file = $request->files['template_zip'];
+            if (!is_array($file)) {
+                throw new ApiException(422, 'template_upload_invalid', '模板上传字段无效。');
+            }
+            return $this->success($this->templateManagement()->upload(
+                $principal,
+                new UploadedTemplateFile(
+                    $this->fileString($file, 'tmp_name'),
+                    $this->fileString($file, 'name'),
+                    $this->fileInteger($file, 'size'),
+                    $this->fileInteger($file, 'error'),
+                ),
+                $requestId,
+            ), $requestId, 201);
+        }
+        if ($method === 'GET'
+            && preg_match('~^/api/v1/template-versions/([0-9A-HJKMNP-TV-Z]{26})/validation$~D', $path, $matches) === 1
+        ) {
+            return $this->success($this->templateManagement()->validation($principal, $matches[1]), $requestId);
+        }
+        if ($method === 'POST'
+            && preg_match('~^/api/v1/template-versions/([0-9A-HJKMNP-TV-Z]{26})/grants$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            $this->grantManagement()->grantBySuperAdmin(
+                $principal,
+                $matches[1],
+                $this->string($request->body, 'team_id'),
+                $requestId,
+            );
+            return $this->success(null, $requestId);
+        }
+        if ($method === 'DELETE'
+            && preg_match('~^/api/v1/template-versions/([0-9A-HJKMNP-TV-Z]{26})/grants/([0-9A-HJKMNP-TV-Z]{26})$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            $this->grantManagement()->revokeBySuperAdmin($principal, $matches[1], $matches[2], $requestId);
+            return $this->success(null, $requestId);
+        }
+
+        foreach (['/api/v1/primary-domains', '/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
             if (str_starts_with($path, $prefix)) {
                 throw new ApiException(501, 'not_implemented', '该资源接口不属于 Phase 1C。');
             }
@@ -227,6 +280,42 @@ final class ControlPlaneKernel
         }
         if (!is_string($value) || $value === '') {
             throw new ApiException(400, 'input_invalid', '无效字段：' . $key);
+        }
+        return $value;
+    }
+
+    private function templateManagement(): TemplateManagementService
+    {
+        if ($this->templates === null) {
+            throw new ApiException(501, 'not_implemented', '模板管理服务尚未配置。');
+        }
+        return $this->templates;
+    }
+
+    private function grantManagement(): TemplateGrantService
+    {
+        if ($this->templateGrants === null) {
+            throw new ApiException(501, 'not_implemented', '模板授权服务尚未配置。');
+        }
+        return $this->templateGrants;
+    }
+
+    /** @param array<string,mixed> $file */
+    private function fileString(array $file, string $key): string
+    {
+        $value = $file[$key] ?? null;
+        if (!is_string($value) || $value === '') {
+            throw new ApiException(422, 'template_upload_invalid', '上传文件字段无效：' . $key);
+        }
+        return $value;
+    }
+
+    /** @param array<string,mixed> $file */
+    private function fileInteger(array $file, string $key): int
+    {
+        $value = $file[$key] ?? null;
+        if (!is_int($value)) {
+            throw new ApiException(422, 'template_upload_invalid', '上传文件字段无效：' . $key);
         }
         return $value;
     }

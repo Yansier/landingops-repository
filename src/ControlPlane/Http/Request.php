@@ -6,7 +6,12 @@ namespace LandingOps\ControlPlane\Http;
 
 final class Request
 {
-    /** @param array<string,string> $headers @param array<string,string> $cookies @param array<string,mixed> $body */
+    /**
+     * @param array<string,string> $headers
+     * @param array<string,string> $cookies
+     * @param array<string,mixed> $body
+     * @param array<string,mixed> $files
+     */
     public function __construct(
         public readonly string $method,
         public readonly string $path,
@@ -14,6 +19,7 @@ final class Request
         public readonly array $cookies = [],
         public readonly array $body = [],
         public readonly string $ip = '',
+        public readonly array $files = [],
     ) {
     }
 

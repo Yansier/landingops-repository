@@ -26,6 +26,7 @@ async function submit() {
       <div><span class="eyebrow">欢迎回来</span><h2>登录管理后台</h2><p>使用管理员为你创建的账号。</p></div>
       <div v-if="route.query.reason==='api'" class="alert">管理接口当前不可用，请确认 PHP API 已启动。</div>
       <div v-if="route.query.reason==='expired'" class="alert alert-neutral">登录状态已过期，请重新登录。</div>
+      <div v-if="route.query.reason==='logout_local'" class="alert alert-neutral">本地登录状态已清除，但服务器退出请求未完成；网络恢复后请重新登录或刷新确认。</div>
       <div v-if="route.query.redirect && !error" class="alert alert-neutral">登录状态已失效，请重新登录。</div>
       <div v-if="error" class="alert" role="alert">{{ error }}</div>
       <label>邮箱地址<input v-model.trim="email" type="email" autocomplete="username" required placeholder="name@example.com" /></label>

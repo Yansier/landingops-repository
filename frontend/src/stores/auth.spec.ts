@@ -12,4 +12,5 @@ describe('认证状态',()=>{
   })
   it('刷新页面通过 Cookie 恢复身份和 CSRF',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({user,capabilities:{manage_teams:true,manage_users:true,transfer_owner:true},csrf_token:'restored'})));const auth=useAuthStore();await auth.restore();expect(auth.user?.email).toBe(user.email);expect(auth.csrfToken).toBe('restored')})
   it('过期 Session 返回 401 后保持未登录',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({code:'unauthorized',message:'过期'},401)));const auth=useAuthStore();await auth.restore();expect(auth.user).toBeNull();expect(auth.initialized).toBe(true)})
+  it('退出请求失败仍清空本地身份并允许路由返回登录页',async()=>{const fetchMock=vi.fn().mockResolvedValueOnce(response({user,csrf_token:'login',expires_at:'tomorrow'})).mockResolvedValueOnce(response({user,capabilities:{manage_teams:true,manage_users:true,transfer_owner:true},csrf_token:'refresh'})).mockRejectedValueOnce(new Error('offline'));vi.stubGlobal('fetch',fetchMock);const auth=useAuthStore();await auth.login('admin@example.test','secret');await expect(auth.logout()).resolves.toBe(false);expect(auth.user).toBeNull();expect(auth.initialized).toBe(true)})
 })

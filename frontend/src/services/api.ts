@@ -32,7 +32,9 @@ async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise
   const method = (init.method ?? 'GET').toUpperCase()
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
-  if (init.body !== undefined) headers.set('Content-Type', 'application/json')
+  if (init.body !== undefined && !(typeof FormData !== 'undefined' && init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const token = csrfReader()
     if (token) headers.set('X-CSRF-Token', token)

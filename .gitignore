@@ -5,6 +5,7 @@
 /frontend/dist/
 /frontend/.vite/
 /frontend/coverage/
+/var/
 /.env
 /.env.local
 /.env.mysql-test.local

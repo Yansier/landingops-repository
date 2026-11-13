@@ -67,9 +67,12 @@ export const useAuthStore = defineStore('auth', () => {
     csrfToken.value = data.csrf_token
   }
 
-  async function logout() {
+  async function logout(): Promise<boolean> {
+    let completed = true
     try { if (user.value) await api<null>('/api/v1/logout', { method: 'POST' }) }
+    catch { completed = false }
     finally { clear(); initialized.value = true }
+    return completed
   }
 
   async function updateProfile(displayName: string) {

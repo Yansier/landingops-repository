@@ -71,12 +71,12 @@
 | 方法与路径 | 权限 | 语义 |
 | --- | --- | --- |
 | `GET /templates` | 所有角色 | 只返回有权查看的元数据与能力；无视觉预览字段 |
-| `POST /templates/uploads` | 总/团队管理员 | multipart 上传 ZIP，先进入私有不可执行 intake，再异步验证；默认压缩包 30 MiB、解压 100 MiB、2,000 文件、单文件 30 MiB |
+| `POST /templates/uploads` | 总/团队管理员 | multipart 单文件上传 ZIP，先进入私有不可执行 intake，再同步完成 Phase 1E 校验与不可变版本登记；默认压缩包 30 MiB、解压 100 MiB、2,000 文件、单文件 30 MiB |
 | `GET /template-versions/{id}/validation` | 有权查看者 | 返回脱敏验证报告 |
 | `POST /template-versions/{id}/grants` | 总管理员 | 授权一个团队 |
 | `DELETE /template-versions/{id}/grants/{team_id}` | 总管理员 | 撤销未来使用权，不操作实例 |
 
-上传响应必须包含版本 ID、SHA-256 和验证状态。相同 `slug + version` 不同哈希返回 `409 template_version_immutable`。
+上传响应必须包含版本 ID、SHA-256 和验证状态。相同内容返回 `409 template_hash_conflict`；相同 `slug + version` 不同哈希返回 `409 template_version_immutable`；LTS 校验失败返回 `422 template_validation_failed` 及脱敏报告。响应永不包含私有绝对路径或 `zip_storage_key`。
 
 团队管理员上传的版本落库后，服务端依据会话用户、版本上传者和模板数据库归属，为上传团队创建默认 `active` grant。后续选用模板只检查服务端 `template_grants.status=active`；客户端不得提交 `owner_team_id` 作为授权依据。总管理员可撤销或再次授权，模板所有权不能绕过已撤销 grant。撤销只阻止该团队用此版本创建新实例，不修改已经绑定该版本的实例、release 或运行文件；总管理员仍拥有所有已存在模板版本的最高访问权限。
 
@@ -196,11 +196,11 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 - 模板截图、预览、缩略图生成或独立预览服务。
 - 审核规避、按检测人员身份分流或随机隐藏文件的接口。
 
-## 11. Phase 1C 实现状态
+## 11. Phase 1E 实现状态
 
 以下路径均位于 `/api/v1`：
 
-| 方法与路径 | Phase 1C 状态 |
+| 方法与路径 | 当前状态 |
 | --- | --- |
 | `POST /login`、`POST /logout`、`GET /me` | 已实现；登录返回安全用户字段、CSRF Token 和过期时间；`GET /me` 返回身份、能力并轮换 CSRF Token |
 | `PATCH /me/profile`、`POST /me/password` | 已实现；改密后撤销该用户全部 Session |
@@ -208,7 +208,10 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 | `GET/POST /users`、`PATCH /users/{id}` | 已实现查询、创建和停用；团队管理员只能操作本团队员工 |
 | `GET /instances` | 已实现授权范围查询；不包含实例创建或部署 |
 | `POST /instances/{id}/owner-transfers` | 已实现服务层、授权、乐观锁、历史和审计契约 |
-| 模板、主域名、任务、宝塔设置业务端点 | 明确返回 `501 not_implemented`，不得返回伪成功 |
+| `GET /templates`、`POST /templates/uploads` | 已实现角色范围查询与单 ZIP 上传；上传沿用 LTS v1.0 验证器 |
+| `GET /template-versions/{id}/validation` | 已实现授权范围内的脱敏验证报告 |
+| `POST /template-versions/{id}/grants`、`DELETE /template-versions/{id}/grants/{team_id}` | 已实现总管理员授权、撤销、再次授权与审计 |
+| 主域名、任务、宝塔设置业务端点 | 明确返回 `501 not_implemented`，不得返回伪成功 |
 
-Phase 1C 的列表端点暂不实现游标翻页；返回固定 `has_more=false`。该限制必须在数据量增长前于后续阶段补齐。模板授权和主域名授权已落在独立授权服务与仓储契约中，但本阶段不开放其业务 API。
+当前列表端点暂不实现游标翻页；返回固定 `has_more=false`。该限制必须在数据量增长前补齐。主域名授权仍只有服务层契约，未开放业务 API。
 

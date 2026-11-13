@@ -13,6 +13,7 @@ const router = createRouter({
       path: '/', component: AdminLayout, meta: { requiresAuth: true }, children: [
         { path: '', name: 'dashboard', component: () => import('@/views/DashboardView.vue') },
         { path: 'instances', name: 'instances', component: () => import('@/views/InstancesView.vue') },
+        { path: 'templates', name: 'templates', component: () => import('@/views/TemplatesView.vue') },
         { path: 'teams', name: 'teams', component: () => import('@/views/TeamsView.vue'), meta: { roles: ['super_admin'] } },
         { path: 'users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { roles: ['super_admin', 'team_admin'] } },
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue') },

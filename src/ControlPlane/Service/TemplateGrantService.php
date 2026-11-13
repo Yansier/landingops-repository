@@ -78,7 +78,8 @@ final class TemplateGrantService
     ): void {
         $this->authorization->assertSuperAdmin($actor);
         $this->version($templateVersionId);
-        if ($this->repository->findTeamById($teamId) === null) {
+        $team = $this->repository->findTeamById($teamId);
+        if ($team === null || ($team['status'] ?? null) !== 'active') {
             throw new ApiException(404, 'team_not_found', '授权目标团队不存在。');
         }
         $this->grant($actor, $templateVersionId, $teamId, $requestId);
@@ -120,7 +121,10 @@ final class TemplateGrantService
     private function version(string $templateVersionId): array
     {
         $version = $this->repository->findTemplateVersionAuthorization($templateVersionId);
-        if ($version === null) {
+        if ($version === null
+            || ($version['validation_status'] ?? null) !== 'valid'
+            || ($version['template_status'] ?? null) !== 'active'
+        ) {
             throw new ApiException(404, 'template_not_available', '模板版本不存在或未授权。');
         }
         return $version;

@@ -193,3 +193,59 @@ input:disabled,select:disabled{background:#f5f6f8;color:#8b95a5}
 .topbar{height:58px}
 .form-actions .btn{width:100%}
 }
+.page-alert{margin-bottom:18px}
+.template-grid{display:grid;gap:18px}
+.template-card{overflow:hidden}
+.template-heading{display:flex;gap:16px;padding:23px 25px}
+.template-heading>div{min-width:0;flex:1}
+.template-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:#efedff;color:var(--primary);flex:0 0 auto}
+.template-title{display:flex;align-items:center;gap:10px}
+.template-title h2{margin:0;font-size:17px}
+.template-heading code{display:block;margin-top:4px;color:#7b8495;font-size:10px}
+.template-heading p{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.7}
+.template-meta{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#fafbfc}
+.template-meta span{padding:12px 25px;font-size:11px;color:#4e5a6d;border-right:1px solid var(--line)}
+.template-meta span:last-child{border-right:0}
+.template-meta small,.version-facts small{display:block;text-transform:uppercase;letter-spacing:.6px;color:#929bad;font-size:8px;margin-bottom:4px}
+.version-list{padding:5px 25px 20px}
+.version-row{padding:18px 0;border-bottom:1px solid var(--line)}
+.version-row:last-child{border-bottom:0;padding-bottom:0}
+.version-main,.version-footer{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.version-main>div>div{display:flex;align-items:center;gap:9px}
+.version-main strong{font-size:14px}
+.version-main p{font-size:9px;color:#8791a2;margin:7px 0 0}
+.version-main code{color:#59657a}
+.standard-chip{font-size:9px;padding:4px 7px;border-radius:6px;background:#edf3fb;color:#496a91;font-weight:600}
+.version-facts{display:flex;gap:30px;text-align:right;font-size:10px;color:#59657a}
+.validation-details{margin-top:13px;border-radius:8px;background:#f8f9fc;padding:10px 12px;font-size:10px;color:#657085}
+.validation-details summary{cursor:pointer;font-weight:600}
+.validation-details ul{margin:9px 0 0;padding-left:18px;display:grid;gap:5px}
+.version-footer{margin-top:14px}
+.availability{display:flex;align-items:center;gap:6px;font-size:10px;color:#9a6060}
+.availability i{width:6px;height:6px;border-radius:50%;background:#d36b6b}
+.availability.available{color:#227b5f}
+.availability.available i{background:#26a77d}
+.btn-small{padding:7px 10px;font-size:10px}
+.danger-outline{color:var(--danger);border-color:#efcccc}
+.file-drop{min-height:150px;border:1.5px dashed #cbd2df;border-radius:12px;background:#fafbfe;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;text-align:center}
+.file-drop:hover{border-color:#8c86ff;background:#f8f7ff}
+.file-drop input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.file-drop .icon{width:28px;height:28px;color:var(--primary);margin-bottom:3px}
+.file-drop b{font-size:12px;color:#364155}
+.file-drop span{font-size:10px;color:#8b96a8}
+.security-note{display:flex;gap:9px;padding:11px;background:#eff8f5;border-radius:8px;color:#39735f;font-size:10px;line-height:1.55}
+.security-note .icon{width:17px;flex:0 0 auto}
+.validation-errors{max-height:190px;overflow:auto;margin:0 0 14px;padding:0;list-style:none;display:grid;gap:7px}
+.validation-errors li{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;padding:9px 10px;background:#fff5f5;border-radius:7px;color:#9e4242;font-size:10px}
+.validation-errors code{grid-column:2}
+.grant-list{display:grid;gap:8px}
+.grant-list>div{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:9px}
+.grant-list>div>div{min-width:0;flex:1}
+.grant-list b,.grant-list small{display:block}
+.grant-list b{font-size:11px}
+.grant-list small{font-size:9px;color:var(--muted);margin-top:2px}
+.badge-valid{background:#e8f7f1;color:#167b59}
+.badge-valid>span{background:#24a777}
+.badge-invalid,.badge-revoked{background:#fff0f0;color:#b43d3d}
+.badge-invalid>span,.badge-revoked>span{background:#d95c5c}
+@media(max-width:760px){.template-heading{padding:19px}.template-meta{grid-template-columns:1fr}.template-meta span{border-right:0;border-bottom:1px solid var(--line);padding:10px 19px}.template-meta span:last-child{border-bottom:0}.version-list{padding:4px 19px 17px}.version-main{align-items:flex-start;flex-direction:column}.version-facts{text-align:left}.version-footer{align-items:flex-start}.version-footer .btn{white-space:nowrap}}

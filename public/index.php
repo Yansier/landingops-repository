@@ -13,6 +13,9 @@ use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
+use LandingOps\ControlPlane\Service\TemplateGrantService;
+use LandingOps\ControlPlane\Service\TemplateManagementService;
+use LandingOps\ControlPlane\Template\PrivateTemplateStorage;
 
 $root = dirname(__DIR__);
 require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
@@ -40,18 +43,46 @@ $headers = function_exists('getallheaders') ? getallheaders() : [];
 $headers = is_array($headers) ? array_map('strval', $headers) : [];
 $requestId = (new RequestId())->resolve($headers['X-Request-Id'] ?? $headers['x-request-id'] ?? '');
 $headers['X-Request-Id'] = $requestId;
-$raw = file_get_contents('php://input');
+$contentType = '';
+foreach ($headers as $name => $value) {
+    if (strcasecmp($name, 'Content-Type') === 0) {
+        $contentType = $value;
+        break;
+    }
+}
+$multipart = str_starts_with(strtolower($contentType), 'multipart/form-data');
+$contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int) $_SERVER['CONTENT_LENGTH'] : 0;
+if ($multipart && $contentLength > (30 * 1024 * 1024) + (256 * 1024)) {
+    emitApiError(413, 'request_too_large', 'multipart 请求超过模板上传限制。', $requestId);
+}
+
+$raw = $multipart ? '' : file_get_contents('php://input');
 $body = [];
+$files = [];
+if ($multipart) {
+    foreach ($_POST as $key => $value) {
+        if (is_string($key) && is_string($value)) {
+            $body[$key] = $value;
+        }
+    }
+    foreach ($_FILES as $key => $file) {
+        if (!is_string($key) || !is_array($file)
+            || is_array($file['name'] ?? null)
+            || is_array($file['tmp_name'] ?? null)
+        ) {
+            emitApiError(422, 'template_upload_count', '不支持批量或嵌套文件上传。', $requestId);
+        }
+        $files[$key] = [
+            'name' => (string) ($file['name'] ?? ''),
+            'tmp_name' => (string) ($file['tmp_name'] ?? ''),
+            'size' => (int) ($file['size'] ?? 0),
+            'error' => (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE),
+        ];
+    }
+}
 if (is_string($raw) && $raw !== '') {
     if (strlen($raw) > 1024 * 1024) {
         emitApiError(413, 'request_too_large', '请求体超过 1 MiB 限制。', $requestId);
-    }
-    $contentType = '';
-    foreach ($headers as $name => $value) {
-        if (strcasecmp($name, 'Content-Type') === 0) {
-            $contentType = $value;
-            break;
-        }
     }
     if (!str_starts_with(strtolower($contentType), 'application/json')) {
         emitApiError(415, 'content_type_invalid', '请求体必须使用 application/json。', $requestId);
@@ -71,11 +102,20 @@ try {
     $pdo = (new PdoFactory())->connect(DatabaseConfig::fromEnvironment());
     $repository = new PdoControlPlaneRepository($pdo);
     $authorization = new AuthorizationService();
+    $templateGrants = new TemplateGrantService($repository, $authorization);
+    $templateManagement = new TemplateManagementService(
+        $repository,
+        PrivateTemplateStorage::forProject($root),
+        $authorization,
+        grants: $templateGrants,
+    );
     $kernel = new ControlPlaneKernel(
         new SessionService($repository),
         new AccountService($repository, $authorization),
         new ResourceAccessService($repository, $authorization),
         new OwnershipTransferService($repository, $authorization),
+        templates: $templateManagement,
+        templateGrants: $templateGrants,
     );
 
     $response = $kernel->handle(new Request(
@@ -85,6 +125,7 @@ try {
         array_map('strval', $_COOKIE),
         $body,
         (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+        $files,
     ));
     http_response_code($response->status);
     foreach ($response->headers as $name => $value) {

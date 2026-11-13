@@ -221,6 +221,98 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         );
     }
 
+    public function findTemplateBySlug(string $slug): ?array
+    {
+        return $this->one('SELECT * FROM templates WHERE slug = ?', [$slug]);
+    }
+
+    public function findTemplateVersionByHash(string $sha256): ?array
+    {
+        return $this->one('SELECT * FROM template_versions WHERE zip_sha256 = ?', [$sha256]);
+    }
+
+    public function findTemplateVersionByTemplateAndVersion(string $templateId, string $version): ?array
+    {
+        return $this->one(
+            'SELECT * FROM template_versions WHERE template_id = ? AND version = ?',
+            [$templateId, $version],
+        );
+    }
+
+    public function insertTemplate(array $template): void
+    {
+        $this->execute(
+            'INSERT INTO templates(id, slug, name, description, owner_team_id, created_by_user_id, status, created_at, updated_at) '
+            . 'VALUES (?,?,?,?,?,?,?,?,?)',
+            [
+                $template['id'], $template['slug'], $template['name'], $template['description'],
+                $template['owner_team_id'], $template['created_by_user_id'], $template['status'],
+                $template['created_at'], $template['updated_at'],
+            ],
+        );
+    }
+
+    public function insertTemplateVersion(array $version): void
+    {
+        $this->execute(
+            'INSERT INTO template_versions(id, template_id, version, standard_version, zip_storage_key, zip_sha256, '
+            . 'manifest_json, config_schema_json, capability_tags_json, validation_status, validation_report_json, '
+            . 'uploaded_by_user_id, published_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $version['id'], $version['template_id'], $version['version'], $version['standard_version'],
+                $version['zip_storage_key'], $version['zip_sha256'], $version['manifest_json'],
+                $version['config_schema_json'], $version['capability_tags_json'], $version['validation_status'],
+                $version['validation_report_json'], $version['uploaded_by_user_id'], $version['published_at'],
+                $version['created_at'],
+            ],
+        );
+    }
+
+    public function listTemplateVersions(?string $teamId): array
+    {
+        $sql = 'SELECT t.id AS template_id, t.slug, t.name AS template_name, t.description, '
+            . 't.owner_team_id, ot.name AS owner_team_name, t.created_by_user_id, creator.display_name AS creator_name, '
+            . 't.status AS template_status, t.created_at AS template_created_at, '
+            . 'tv.id AS version_id, tv.version, tv.standard_version, tv.zip_sha256, tv.validation_status, '
+            . 'tv.validation_report_json, tv.uploaded_by_user_id, uploader.display_name AS uploader_name, '
+            . 'tv.published_at, tv.created_at AS version_created_at '
+            . 'FROM template_versions tv JOIN templates t ON t.id = tv.template_id '
+            . 'JOIN users creator ON creator.id = t.created_by_user_id '
+            . 'JOIN users uploader ON uploader.id = tv.uploaded_by_user_id '
+            . 'LEFT JOIN teams ot ON ot.id = t.owner_team_id '
+            . "WHERE t.status = 'active' AND tv.validation_status = 'valid'";
+        $parameters = [];
+        if ($teamId !== null) {
+            $sql .= " AND EXISTS (SELECT 1 FROM template_grants tg WHERE tg.template_version_id = tv.id "
+                . "AND tg.team_id = ? AND tg.status = 'active')";
+            $parameters[] = $teamId;
+        }
+        return $this->all($sql . ' ORDER BY t.created_at DESC, tv.created_at DESC, tv.id DESC', $parameters);
+    }
+
+    public function findTemplateVersionDetail(string $templateVersionId, ?string $teamId): ?array
+    {
+        $sql = 'SELECT tv.id, tv.validation_status, tv.validation_report_json FROM template_versions tv '
+            . "JOIN templates t ON t.id = tv.template_id WHERE tv.id = ? AND t.status = 'active'";
+        $parameters = [$templateVersionId];
+        if ($teamId !== null) {
+            $sql .= " AND EXISTS (SELECT 1 FROM template_grants tg WHERE tg.template_version_id = tv.id "
+                . "AND tg.team_id = ? AND tg.status = 'active')";
+            $parameters[] = $teamId;
+        }
+        return $this->one($sql, $parameters);
+    }
+
+    public function listTemplateGrants(string $templateVersionId): array
+    {
+        return $this->all(
+            'SELECT tg.team_id, team.name AS team_name, tg.status, tg.granted_at, tg.revoked_at '
+            . 'FROM template_grants tg JOIN teams team ON team.id = tg.team_id '
+            . 'WHERE tg.template_version_id = ? ORDER BY team.name, team.id',
+            [$templateVersionId],
+        );
+    }
+
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool
     {
         return $this->exists(
