@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1G（Cloudflare 只读验证与 DNS 预检查）**。已提供固定官方 API origin 的 Token/Zone/DNS Read 验证、管理员状态与验证状态分离、DNS 冲突只读分类及 Vue 页面；不会创建或修改 DNS。仍不包含实例创建、DNS/SSL 自动化、生产发布 Worker 或真实宝塔调用。
+> 当前状态：**Phase 1G.1（Cloudflare 验证一致性与 DNS 安全预检查收尾）**。Zone 验证证据已绑定当前 Token/Account 信任上下文；轮换 Token 或修改账号标识会使该连接下全部 Zone 旧证据失效。DNS `compatible` 必须完整满足 A、确认 IPv4、`proxied=false`、`ttl=1`；不会创建或修改 DNS。
 
 ## 最重要的边界
 

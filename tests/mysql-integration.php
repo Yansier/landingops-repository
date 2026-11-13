@@ -212,6 +212,8 @@ try {
     $dataBeforeRepeat = [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
         (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM cloudflare_connections')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM cloudflare_zones')->fetchColumn(),
     ];
     integrationAssert($runner->migrate($pdo, $root . '/database/migrations') === [], '第二次迁移不应应用版本。');
     integrationAssert($structureBeforeRepeat === [
@@ -223,6 +225,8 @@ try {
     integrationAssert($dataBeforeRepeat === [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
         (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM cloudflare_connections')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM cloudflare_zones')->fetchColumn(),
     ], '重复执行迁移改变了活动键表数据。');
     $newCheckCount = (int) $pdo->query(
         "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
@@ -237,6 +241,18 @@ try {
         . "'chk_cloudflare_zones_version') AND constraint_type = 'CHECK'",
     )->fetchColumn();
     integrationAssert($cloudflareCheckCount === 6, '003 的管理员、验证和版本 CHECK 未完整创建。');
+    $bindingCheckCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
+        . "AND constraint_name IN ('chk_cloudflare_connections_credential_context_version',"
+        . "'chk_cloudflare_zones_verified_credential_context') AND constraint_type = 'CHECK'",
+    )->fetchColumn();
+    integrationAssert($bindingCheckCount === 2, '004 的凭据上下文 CHECK 未完整创建。');
+    $bindingColumnCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() "
+        . "AND ((table_name='cloudflare_connections' AND column_name='credential_context_version') "
+        . "OR (table_name='cloudflare_zones' AND column_name='verified_credential_context_version'))",
+    )->fetchColumn();
+    integrationAssert($bindingColumnCount === 2, '004 的凭据上下文字段未完整创建。');
 
     $businessTables = [
         'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
@@ -560,6 +576,32 @@ try {
             'external_zone_id' => 'external_' . strtolower($ids->generate()),
             'zone_name' => strtolower($ids->generate()) . '.integration.invalid',
         ], 'mysql-zone-create');
+        $managedZoneB = $domainService->createZone($super, [
+            'connection_id' => $managedConnection['id'],
+            'external_zone_id' => 'external_' . strtolower($ids->generate()),
+            'zone_name' => strtolower($ids->generate()) . '.integration.invalid',
+        ], 'mysql-zone-create-b');
+        foreach ([$managedZone, $managedZoneB] as $verifiedZone) {
+            integrationAssert($repository->updateCloudflareZone((string) $verifiedZone['id'], [
+                'verification_status' => 'valid',
+                'verified_credential_context_version' => (int) $managedConnection['credential_context_version'],
+                'cloudflare_status' => 'active', 'status' => 'active', 'updated_at' => $now,
+            ], 1), '真实 PDO Zone 验证状态写入失败。');
+        }
+        $managedConnection = $connectionService->update($super, (string) $managedConnection['id'], [
+            'api_token' => $secretToken . '-second-rotation', 'expected_version' => 4,
+        ], 'mysql-cf-multi-zone-rotate');
+        integrationAssert($managedConnection['credential_context_version'] === 3, 'Token 轮换未递增凭据上下文版本。');
+        foreach ([$managedZone, $managedZoneB] as $invalidatedZone) {
+            $storedZone = $repository->findCloudflareZone((string) $invalidatedZone['id']);
+            integrationAssert(
+                is_array($storedZone)
+                && $storedZone['verification_status'] === 'unverified'
+                && $storedZone['verified_credential_context_version'] === null
+                && (int) $storedZone['version'] === 3,
+                'Token 轮换未使全部关联 Zone 的旧证据和乐观锁版本失效。',
+            );
+        }
         $managedDomain = $domainService->createDomain($super, [
             'zone_id' => $managedZone['id'],
             'domain_name' => 'pages.' . $managedZone['normalized_zone_name'],
@@ -596,7 +638,7 @@ try {
         }
     }
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
-        . "；22 表、002 NULL/错配/活动唯一键、重复/失败迁移恢复、FK/CHECK/UNIQUE、"
+        . "；22 表、002/003/004、凭据上下文与多 Zone 失效、重复/失败迁移恢复、FK/CHECK/UNIQUE、"
         . "PDO Session、负责人事务及单宝塔约束均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')

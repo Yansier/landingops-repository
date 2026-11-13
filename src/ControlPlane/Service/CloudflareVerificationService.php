@@ -99,6 +99,7 @@ final class CloudflareVerificationService
                     ? 'disabled' : ($zoneResult['status'] === 'active' ? 'active' : 'unverified');
                 if (!$this->repository->updateCloudflareZone($zoneId, [
                     'verification_status' => 'valid', 'cloudflare_status' => $zoneResult['status'], 'status' => $zoneLegacy,
+                    'verified_credential_context_version' => (int) ($connection['credential_context_version'] ?? 1),
                     'last_synced_at' => $now, 'last_verification_result_json' => self::json($result), 'updated_at' => $now,
                 ], $expectedZoneVersion)) {
                     throw new ApiException(409, 'cloudflare_zone_version_conflict', 'Zone 在验证期间被更新，验证结果未提交。');

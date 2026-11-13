@@ -102,6 +102,7 @@ erDiagram
 - `label` 唯一；`token_hint` 只保存不可用于认证的末尾提示。
 - Phase 1F 使用 AES-256-GCM、随机 nonce 与记录 ID AAD；环境密钥环由 `secret_key_version` 选取，原始 Token 和密文均不得进入 API、日志或审计。
 - Phase 1G 的 003 迁移将连接/Zone 的 `admin_state` 与 `verification_status` 分离，并增加乐观锁 `version`、脱敏验证结果及 Zone `cloudflare_status`。Token 轮换只重置验证状态，不能启用已停用资源。
+- Phase 1G.1 的 004 迁移增加连接 `credential_context_version` 与 Zone `verified_credential_context_version`。旧 `status=active` 不再被当作可信验证证据；004 保守回填为 `unverified`。Token 或 Account ID 变更会在事务内递增上下文版本、失效全部关联 Zone 并递增其乐观锁版本，同时保持 `admin_state`。
 - 不因连接停用删除 Zone、DNS 或实例。
 
 ### `cloudflare_zones`

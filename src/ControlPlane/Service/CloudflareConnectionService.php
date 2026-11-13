@@ -57,6 +57,7 @@ final class CloudflareConnectionService
             'status' => 'unverified',
             'admin_state' => 'enabled',
             'verification_status' => 'unverified',
+            'credential_context_version' => 1,
             'last_verified_at' => null,
             'last_verification_attempt_at' => null,
             'last_verification_result_json' => null,
@@ -91,11 +92,13 @@ final class CloudflareConnectionService
         }
         $expectedVersion = self::expectedVersion($input);
         $changes = [];
+        $trustContextChanged = false;
         if (array_key_exists('label', $input)) {
             $changes['label'] = self::label($input['label']);
         }
         if (array_key_exists('account_external_id', $input)) {
             $changes['account_external_id'] = self::nullableIdentifier($input['account_external_id'], 'account_external_id');
+            $trustContextChanged = $changes['account_external_id'] !== ($current['account_external_id'] ?? null);
         }
         if (array_key_exists('admin_state', $input)) {
             if (!in_array($input['admin_state'], ['enabled', 'disabled'], true)) {
@@ -112,20 +115,40 @@ final class CloudflareConnectionService
             $changes['last_verified_at'] = null;
             $changes['verification_status'] = 'unverified';
             $changes['last_verification_result_json'] = null;
+            $trustContextChanged = true;
         }
         if ($changes === []) {
             throw new ApiException(422, 'input_invalid', '没有可更新的连接字段。');
+        }
+        if ($trustContextChanged) {
+            $changes['credential_context_version'] = (int) ($current['credential_context_version'] ?? 1) + 1;
+            $changes['verification_status'] = 'unverified';
+            $changes['last_verified_at'] = null;
+            $changes['last_verification_attempt_at'] = null;
+            $changes['last_verification_result_json'] = null;
         }
         $newAdminState = (string) ($changes['admin_state'] ?? $current['admin_state']);
         $newVerification = (string) ($changes['verification_status'] ?? $current['verification_status']);
         $changes['status'] = self::legacyStatus($newAdminState, $newVerification);
         $changes['updated_at'] = $this->clock->sql();
         try {
-            $this->repository->transaction(function () use ($id, $changes, $expectedVersion, $current, $actor, $requestId): void {
+            $this->repository->transaction(function () use ($id, $changes, $expectedVersion, $current, $trustContextChanged, $actor, $requestId): void {
                 if (!$this->repository->updateCloudflareConnection($id, $changes, $expectedVersion)) {
                     throw new ApiException(409, 'cloudflare_connection_version_conflict', '连接已被其他管理员更新，请刷新后重新确认。', [
                         'current_version' => (int) (($this->repository->findCloudflareConnection($id)['version'] ?? $expectedVersion)),
                     ]);
+                }
+                $invalidatedZones = 0;
+                if ($trustContextChanged) {
+                    $invalidatedZones = $this->repository->invalidateCloudflareZonesForConnection(
+                        $id,
+                        json_encode([
+                            'status' => 'invalidated',
+                            'code' => 'credential_context_changed',
+                            'credential_context_version' => $changes['credential_context_version'],
+                        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+                        (string) $changes['updated_at'],
+                    );
                 }
                 $action = 'cloudflare.connection_update';
                 if (($changes['admin_state'] ?? null) === 'disabled' && ($current['admin_state'] ?? null) !== 'disabled') {
@@ -137,6 +160,8 @@ final class CloudflareConnectionService
                     'rotated_token' => isset($changes['token_ciphertext']),
                     'admin_state' => $changes['admin_state'] ?? null,
                     'verification_status' => $changes['verification_status'] ?? null,
+                    'credential_context_changed' => $trustContextChanged,
+                    'invalidated_zone_count' => $invalidatedZones,
                 ]);
             });
         } catch (Throwable $exception) {
@@ -165,6 +190,7 @@ final class CloudflareConnectionService
             'id' => $row['id'], 'label' => $row['label'], 'account_external_id' => $row['account_external_id'],
             'token_hint' => $row['token_hint'], 'status' => $row['status'],
             'admin_state' => $row['admin_state'], 'verification_status' => $row['verification_status'],
+            'credential_context_version' => (int) $row['credential_context_version'],
             'last_verified_at' => $row['last_verified_at'],
             'last_verification_attempt_at' => $row['last_verification_attempt_at'],
             'last_verification_result' => self::decodeResult($row['last_verification_result_json'] ?? null),

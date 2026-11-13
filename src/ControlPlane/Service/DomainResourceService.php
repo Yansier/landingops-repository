@@ -58,6 +58,7 @@ final class DomainResourceService
             'id' => $this->ids->generate(), 'connection_id' => $connectionId, 'external_zone_id' => $externalId,
             'zone_name' => $name, 'normalized_zone_name' => $name, 'status' => 'unverified',
             'admin_state' => 'enabled', 'verification_status' => 'unverified',
+            'verified_credential_context_version' => null,
             'cloudflare_status' => null,
             'last_synced_at' => null, 'last_verification_result_json' => null, 'version' => 1,
             'created_at' => $now, 'updated_at' => $now,
@@ -284,6 +285,7 @@ final class DomainResourceService
         return ($row['domain_status'] ?? null) === 'active'
             && ($row['zone_admin_state'] ?? null) === 'enabled'
             && ($row['zone_verification_status'] ?? null) === 'valid'
+            && ($row['zone_verified_credential_context_version'] ?? null) === ($row['connection_credential_context_version'] ?? null)
             && ($row['zone_cloudflare_status'] ?? $row['cloudflare_status'] ?? null) === 'active'
             && ($row['connection_admin_state'] ?? null) === 'enabled'
             && ($row['connection_verification_status'] ?? null) === 'valid';

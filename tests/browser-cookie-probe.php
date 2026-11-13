@@ -49,9 +49,35 @@ if ($method === 'GET' && $path === '/api/v1/me' && hash_equals('secure-cookie-pr
     return;
 }
 
+if ($method === 'GET' && $path === '/api/v1/cloudflare-connections' && hash_equals('secure-cookie-probe', $cookie)) {
+    echo json_encode(['data' => [[
+        'id' => '01CCCCCCCCCCCCCCCCCCCCCCCC', 'label' => '本地只读探针', 'account_external_id' => 'acct_probe',
+        'token_hint' => '…test', 'status' => 'active', 'admin_state' => 'enabled', 'verification_status' => 'valid',
+        'credential_context_version' => 2, 'last_verified_at' => '2026-11-13 08:00:00',
+        'last_verification_attempt_at' => '2026-11-13 08:00:00', 'last_verification_result' => ['status' => 'success'],
+        'version' => 7, 'created_at' => '2026-11-13 08:00:00', 'updated_at' => '2026-11-13 08:00:00',
+    ]], 'page' => ['next_cursor' => null, 'has_more' => false], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'GET' && $path === '/api/v1/cloudflare-zones' && hash_equals('secure-cookie-probe', $cookie)) {
+    $base = [
+        'connection_id' => '01CCCCCCCCCCCCCCCCCCCCCCCC', 'connection_label' => '本地只读探针',
+        'connection_status' => 'active', 'connection_admin_state' => 'enabled', 'connection_verification_status' => 'valid',
+        'connection_credential_context_version' => 2, 'status' => 'active', 'admin_state' => 'enabled',
+        'last_verification_result' => null, 'version' => 4, 'last_synced_at' => null,
+        'created_at' => '2026-11-13 08:00:00', 'updated_at' => '2026-11-13 08:00:00',
+    ];
+    echo json_encode(['data' => [
+        $base + ['id' => '01ZZZZZZZZZZZZZZZZZZZZZZA', 'external_zone_id' => 'zone_a', 'zone_name' => 'a.example.test', 'normalized_zone_name' => 'a.example.test', 'verification_status' => 'valid', 'verified_credential_context_version' => 2, 'cloudflare_status' => 'active'],
+        $base + ['id' => '01ZZZZZZZZZZZZZZZZZZZZZZB', 'external_zone_id' => 'zone_b', 'zone_name' => 'b.example.test', 'normalized_zone_name' => 'b.example.test', 'verification_status' => 'unverified', 'verified_credential_context_version' => null, 'cloudflare_status' => null],
+    ], 'page' => ['next_cursor' => null, 'has_more' => false], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
+    return;
+}
+
 if ($method === 'GET' && in_array($path, [
     '/api/v1/instances', '/api/v1/teams', '/api/v1/users', '/api/v1/templates',
-    '/api/v1/cloudflare-connections', '/api/v1/cloudflare-zones', '/api/v1/primary-domains',
+    '/api/v1/primary-domains',
 ], true)
     && hash_equals('secure-cookie-probe', $cookie)
 ) {

@@ -99,7 +99,9 @@
 | `DELETE /primary-domains/{id}/grants/{team_id}` | 总管理员 | 撤销未来创建权限，不改 DNS/实例 |
 | `POST /primary-domains/{id}/dns-prechecks` | 总管理员 | 精确查询候选域名记录并分类；绝不写 DNS |
 
-连接和 Zone 的 `admin_state` 与 `verification_status` 独立；Token 轮换不得改变管理员启停状态。PATCH 必须提交 `expected_version`，陈旧写入返回 409。只读验证只在 Token active、Zone ID/名称/账号匹配且 DNS Read 成功后更新可信状态。预检查结果为 `clear|compatible|needs_configuration|conflict`。
+连接和 Zone 的 `admin_state` 与 `verification_status` 独立；Token 轮换不得改变管理员启停状态。连接的 `credential_context_version` 在 Token 轮换或 Account ID 变更时递增，并使全部关联 Zone 的旧验证证据失效；Zone 只有 `verified_credential_context_version` 等于连接当前版本才可用。PATCH 必须提交 `expected_version`，陈旧写入返回 409。只读验证只在 Token active、Zone ID/名称/账号匹配且 DNS Read 成功后更新所选 Zone 的可信状态。
+
+预检查结果为 `clear|compatible|needs_configuration|conflict`。`compatible` 仅表示所有精确同名记录完整符合 `type=A`、管理员确认 IPv4、`proxied=false`、`ttl=1`；同 IP 但代理开启、TTL 不符、存在其他类型均为冲突，缺少必要元数据或确认 IP 为无法安全确认。`clear` 仅表示未发现精确同名记录，不代表已排除通配符记录、NS 委派或其他 DNS 风险。
 
 `api_token` 只在创建/轮换请求体中出现；响应、普通日志和审计不得包含明文或密文。未配置环境密钥时 Token 写入返回 `503 secret_key_unavailable`，而不是明文降级。总管理员看到全部资源；团队管理员看到本团队有效授权（包括明确标记的不可用状态）；员工只看到授权、管理员启用且连接/Zone 验证有效的资源。只读适配器固定官方 origin、禁止重定向和任意路径，并设置超时、有限重试、响应上限与脱敏错误。员工不能提交 connection ID 来改变 Zone 路由。
 

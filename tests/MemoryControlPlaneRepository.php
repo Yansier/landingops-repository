@@ -459,6 +459,27 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         return true;
     }
 
+    public function invalidateCloudflareZonesForConnection(string $connectionId, string $resultJson, string $at): int
+    {
+        $count = 0;
+        foreach ($this->cloudflareZones as &$zone) {
+            if (($zone['connection_id'] ?? null) !== $connectionId) {
+                continue;
+            }
+            $zone['verification_status'] = 'unverified';
+            $zone['verified_credential_context_version'] = null;
+            $zone['cloudflare_status'] = null;
+            $zone['status'] = ($zone['admin_state'] ?? null) === 'disabled' ? 'disabled' : 'unverified';
+            $zone['last_synced_at'] = null;
+            $zone['last_verification_result_json'] = $resultJson;
+            $zone['updated_at'] = $at;
+            $zone['version'] = (int) ($zone['version'] ?? 1) + 1;
+            $count++;
+        }
+        unset($zone);
+        return $count;
+    }
+
     public function listCloudflareZones(): array
     {
         $rows = [];
@@ -469,6 +490,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 'connection_status' => $connection['status'] ?? null,
                 'connection_admin_state' => $connection['admin_state'] ?? null,
                 'connection_verification_status' => $connection['verification_status'] ?? null,
+                'connection_credential_context_version' => $connection['credential_context_version'] ?? null,
             ];
         }
         return $rows;
@@ -486,6 +508,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             'connection_status' => $connection['status'] ?? null,
             'connection_admin_state' => $connection['admin_state'] ?? null,
             'connection_verification_status' => $connection['verification_status'] ?? null,
+            'connection_credential_context_version' => $connection['credential_context_version'] ?? null,
         ];
     }
 
@@ -548,6 +571,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             if ($usableOnly && (($domain['status'] ?? null) !== 'active'
                 || ($zone['admin_state'] ?? null) !== 'enabled'
                 || ($zone['verification_status'] ?? null) !== 'valid'
+                || ($zone['verified_credential_context_version'] ?? null) !== ($zone['connection_credential_context_version'] ?? null)
                 || ($zone['connection_admin_state'] ?? null) !== 'enabled'
                 || ($zone['connection_verification_status'] ?? null) !== 'valid')) {
                 continue;
@@ -560,10 +584,12 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 'zone_status' => $zone['status'], 'connection_id' => $zone['connection_id'],
                 'connection_label' => $zone['connection_label'], 'connection_status' => $zone['connection_status'],
                 'zone_admin_state' => $zone['admin_state'], 'zone_verification_status' => $zone['verification_status'],
+                'zone_verified_credential_context_version' => $zone['verified_credential_context_version'] ?? null,
                 'zone_cloudflare_status' => $zone['cloudflare_status'] ?? null,
                 'zone_verification_result_json' => $zone['last_verification_result_json'] ?? null,
                 'connection_admin_state' => $zone['connection_admin_state'],
                 'connection_verification_status' => $zone['connection_verification_status'],
+                'connection_credential_context_version' => $zone['connection_credential_context_version'] ?? null,
             ];
         }
         return $rows;
@@ -580,9 +606,11 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             'zone_status' => $zone['status'], 'normalized_zone_name' => $zone['normalized_zone_name'],
             'connection_id' => $zone['connection_id'], 'connection_status' => $zone['connection_status'],
             'zone_admin_state' => $zone['admin_state'], 'zone_verification_status' => $zone['verification_status'],
+            'zone_verified_credential_context_version' => $zone['verified_credential_context_version'] ?? null,
             'zone_cloudflare_status' => $zone['cloudflare_status'] ?? null,
             'connection_admin_state' => $zone['connection_admin_state'],
             'connection_verification_status' => $zone['connection_verification_status'],
+            'connection_credential_context_version' => $zone['connection_credential_context_version'] ?? null,
         ];
     }
 

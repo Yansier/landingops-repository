@@ -97,6 +97,7 @@ export interface CloudflareConnection {
   status: string
   admin_state: AdminState
   verification_status: VerificationStatus
+  credential_context_version: number
   last_verified_at: string | null
   last_verification_attempt_at: string | null
   last_verification_result: Record<string, unknown> | null
@@ -113,6 +114,7 @@ export interface CloudflareZone {
   status: string
   admin_state: AdminState
   verification_status: VerificationStatus
+  verified_credential_context_version: number | null
   cloudflare_status: string | null
   last_verification_result: Record<string, unknown> | null
   version: number
@@ -120,6 +122,7 @@ export interface CloudflareZone {
   connection_status: string
   connection_admin_state: AdminState
   connection_verification_status: VerificationStatus
+  connection_credential_context_version: number
   last_synced_at: string | null
   created_at: string
   updated_at: string
@@ -142,12 +145,14 @@ export interface PrimaryDomain {
   zone_status: string
   zone_admin_state: AdminState
   zone_verification_status: VerificationStatus
+  zone_verified_credential_context_version: number | null
   zone_cloudflare_status: string | null
   connection_id: string
   connection_label: string
   connection_status: string
   connection_admin_state: AdminState
   connection_verification_status: VerificationStatus
+  connection_credential_context_version: number
   available: boolean
   grants: DomainGrant[]
   created_at: string
@@ -159,6 +164,8 @@ export interface DnsPrecheckResult {
   classification: 'clear' | 'compatible' | 'needs_configuration' | 'conflict'
   records: Array<{ id: string; type: string; name: string; content: string; proxied: boolean | null; ttl: number | null }>
   confirmed_public_ipv4: string | null
+  issues: Array<{ code: string; record_id: string | null; message: string }>
+  limitations: string[]
   message: string
 }
 

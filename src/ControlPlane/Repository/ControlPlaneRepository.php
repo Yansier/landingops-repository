@@ -79,6 +79,7 @@ interface ControlPlaneRepository
     public function insertCloudflareConnection(array $connection): void;
     /** @param array<string,mixed> $changes */
     public function updateCloudflareConnection(string $id, array $changes, int $expectedVersion): bool;
+    public function invalidateCloudflareZonesForConnection(string $connectionId, string $resultJson, string $at): int;
     /** @return list<array<string,mixed>> */
     public function listCloudflareZones(): array;
     /** @return array<string,mixed>|null */

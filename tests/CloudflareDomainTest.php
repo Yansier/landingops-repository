@@ -140,6 +140,69 @@ return [
         TestHarness::assertSame('domain_zone_mismatch', $mismatch->errorCode);
     },
 
+    'token and account changes invalidate every zone credential binding' => static function (): void {
+        [$repository, $principals] = controlFixture();
+        [$connections, $domains, $cipher] = cloudflareServices($repository);
+        $connection = $connections->create($principals[SUPER_ID], [
+            'label' => 'Multi zone', 'account_external_id' => 'acct_1', 'api_token' => 'old-synthetic-token',
+        ], 'create');
+        $zoneA = $domains->createZone($principals[SUPER_ID], [
+            'connection_id' => $connection['id'], 'external_zone_id' => 'zone_A', 'zone_name' => 'a.example.com',
+        ], 'zone-a');
+        $zoneB = $domains->createZone($principals[SUPER_ID], [
+            'connection_id' => $connection['id'], 'external_zone_id' => 'zone_B', 'zone_name' => 'b.example.com',
+        ], 'zone-b');
+        $clientFor = static fn (string $zoneId, string $name): CloudflareReadOnlyClient => new CloudflareReadOnlyClient(
+            new FakeCloudflareTransport(
+                cfResponse(200, ['success' => true, 'result' => ['id' => 'token', 'status' => 'active']]),
+                cfResponse(200, ['success' => true, 'result' => ['id' => $zoneId, 'name' => $name, 'status' => 'active', 'account' => ['id' => 'acct_1']]]),
+                cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            ),
+            static function (int $microseconds): void {},
+        );
+        (new CloudflareVerificationService($repository, $cipher, $clientFor('zone_A', 'a.example.com')))
+            ->verify($principals[SUPER_ID], $connection['id'], $zoneA['id'], 1, 1, 'verify-a-old');
+        $repository->cloudflareConnections[$connection['id']]['last_verification_attempt_at'] = null;
+        (new CloudflareVerificationService($repository, $cipher, $clientFor('zone_B', 'b.example.com')))
+            ->verify($principals[SUPER_ID], $connection['id'], $zoneB['id'], 3, 1, 'verify-b-old');
+        $domains->updateZone($principals[SUPER_ID], $zoneB['id'], ['admin_state' => 'disabled', 'expected_version' => 2], 'disable-b');
+
+        $rotated = $connections->update($principals[SUPER_ID], $connection['id'], [
+            'api_token' => 'zone-a-only-synthetic-token', 'expected_version' => 5,
+        ], 'rotate');
+        TestHarness::assertSame(2, $rotated['credential_context_version']);
+        TestHarness::assertSame('unverified', $repository->cloudflareZones[$zoneA['id']]['verification_status']);
+        TestHarness::assertSame('unverified', $repository->cloudflareZones[$zoneB['id']]['verification_status']);
+        TestHarness::assertSame('disabled', $repository->cloudflareZones[$zoneB['id']]['admin_state']);
+        TestHarness::assertSame(null, $repository->cloudflareZones[$zoneB['id']]['verified_credential_context_version']);
+
+        $stale = TestHarness::assertThrows(
+            static fn () => (new CloudflareVerificationService($repository, $cipher, $clientFor('zone_A', 'a.example.com')))
+                ->verify($principals[SUPER_ID], $connection['id'], $zoneA['id'], 6, 2, 'verify-a-stale'),
+            ApiException::class,
+        );
+        TestHarness::assertSame(409, $stale->status);
+
+        (new CloudflareVerificationService($repository, $cipher, $clientFor('zone_A', 'a.example.com')))
+            ->verify($principals[SUPER_ID], $connection['id'], $zoneA['id'], 6, 3, 'verify-a-new');
+        TestHarness::assertSame('valid', $repository->cloudflareZones[$zoneA['id']]['verification_status']);
+        TestHarness::assertSame(2, $repository->cloudflareZones[$zoneA['id']]['verified_credential_context_version']);
+        TestHarness::assertSame('unverified', $repository->cloudflareZones[$zoneB['id']]['verification_status']);
+
+        $domains->updateZone($principals[SUPER_ID], $zoneB['id'], ['admin_state' => 'enabled', 'expected_version' => 4], 'enable-b');
+        $repository->cloudflareConnections[$connection['id']]['last_verification_attempt_at'] = null;
+        (new CloudflareVerificationService($repository, $cipher, $clientFor('zone_B', 'b.example.com')))
+            ->verify($principals[SUPER_ID], $connection['id'], $zoneB['id'], 8, 5, 'verify-b-new');
+        TestHarness::assertSame(2, $repository->cloudflareZones[$zoneB['id']]['verified_credential_context_version']);
+
+        $changedAccount = $connections->update($principals[SUPER_ID], $connection['id'], [
+            'account_external_id' => 'acct_2', 'expected_version' => 10,
+        ], 'account-change');
+        TestHarness::assertSame(3, $changedAccount['credential_context_version']);
+        TestHarness::assertSame('unverified', $repository->cloudflareZones[$zoneA['id']]['verification_status']);
+        TestHarness::assertSame('unverified', $repository->cloudflareZones[$zoneB['id']]['verification_status']);
+    },
+
     'domain grants enforce role scope revoke regrant and upstream status' => static function (): void {
         [$repository, $principals] = controlFixture();
         [$connections, $domains] = cloudflareServices($repository);
@@ -159,6 +222,7 @@ return [
         $repository->cloudflareConnections[$connection['id']]['verification_status'] = 'valid';
         $repository->cloudflareZones[$zone['id']]['status'] = 'active';
         $repository->cloudflareZones[$zone['id']]['verification_status'] = 'valid';
+        $repository->cloudflareZones[$zone['id']]['verified_credential_context_version'] = 1;
         $repository->cloudflareZones[$zone['id']]['cloudflare_status'] = 'active';
         TestHarness::assertSame(1, count($domains->listDomains($principals[STAFF_A_ID])));
         $domains->revoke($principals[SUPER_ID], $domain['id'], TEAM_A_ID, 'revoke');
@@ -255,16 +319,33 @@ return [
         $domain = $domains->createDomain($principals[SUPER_ID], ['zone_id' => $zone['id'], 'domain_name' => 'pages.example.com'], 'domain');
         $repository->cloudflareConnections[$connection['id']]['verification_status'] = 'valid';
         $repository->cloudflareZones[$zone['id']]['verification_status'] = 'valid';
+        $repository->cloudflareZones[$zone['id']]['verified_credential_context_version'] = 1;
         $repository->cloudflareZones[$zone['id']]['cloudflare_status'] = 'active';
         $responses = [
             cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'a1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10']], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'c1', 'type' => 'CNAME', 'name' => 'www.pages.example.com', 'content' => 'other.example.net']], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'a1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'c1', 'type' => 'CNAME', 'name' => 'www.pages.example.com', 'content' => 'other.example.net', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'p1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => true, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 't1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 300]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'm1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10']], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'v1', 'type' => 'AAAA', 'name' => 'www.pages.example.com', 'content' => '2001:db8::1', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
         ];
         $service = new CloudflareDnsPrecheckService($repository, $cipher, new CloudflareReadOnlyClient(new FakeCloudflareTransport(...$responses), static function (int $microseconds): void {}), confirmedPublicIpv4: '203.0.113.10');
         TestHarness::assertSame('clear', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
         TestHarness::assertSame('compatible', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
         TestHarness::assertSame('conflict', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
+        $proxied = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('conflict', $proxied['classification']);
+        TestHarness::assertSame('proxied_mismatch', $proxied['issues'][0]['code']);
+        $ttl = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('conflict', $ttl['classification']);
+        TestHarness::assertSame('ttl_mismatch', $ttl['issues'][0]['code']);
+        $missing = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('needs_configuration', $missing['classification']);
+        TestHarness::assertSame(2, count($missing['issues']));
+        $aaaa = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('conflict', $aaaa['classification']);
+        TestHarness::assertContains('通配符', implode(' ', $aaaa['limitations']));
     },
 
     'cloudflare and domain API routes require session csrf and server authorization' => static function (): void {

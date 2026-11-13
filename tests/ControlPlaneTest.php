@@ -423,10 +423,22 @@ return [
             'Historical anomaly guard must run before permanent DDL.',
         );
         $sql003 = (string) file_get_contents($migrationDirectory . '/003_split_cloudflare_admin_verification_state.sql');
+        TestHarness::assertSame(
+            'f1e39580c9d880a0e3e7552a31060e477ee0d42c0f17116a0760d16f4614ef9d',
+            hash_file('sha256', $migrationDirectory . '/003_split_cloudflare_admin_verification_state.sql'),
+            '003 migration must remain immutable after Phase 1G acceptance.',
+        );
         foreach (['admin_state', 'verification_status', 'last_verification_attempt_at', 'last_verification_result_json', 'version'] as $column) {
             TestHarness::assertContains($column, $sql003);
         }
         TestHarness::assertContains('cloudflare_status', $sql003);
         TestHarness::assertNotContains('DROP TABLE', strtoupper($sql003));
+        $sql004 = (string) file_get_contents($migrationDirectory . '/004_bind_cloudflare_zone_verification_context.sql');
+        TestHarness::assertContains('credential_context_version', $sql004);
+        TestHarness::assertContains('verified_credential_context_version', $sql004);
+        TestHarness::assertContains("verification_status = 'unverified'", $sql004);
+        TestHarness::assertContains("WHERE verification_status = 'valid' OR status = 'active'", $sql004);
+        TestHarness::assertContains('credential_context_binding_required', $sql004);
+        TestHarness::assertNotContains('DROP TABLE', strtoupper($sql004));
     },
 ];
