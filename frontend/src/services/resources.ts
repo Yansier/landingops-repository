@@ -1,5 +1,5 @@
 import { api, apiList, jsonBody } from './api'
-import type { Instance, ManagedTemplate, Team, TemplateUploadResult, User } from '@/types/api'
+import type { CloudflareConnection, CloudflareZone, Instance, ManagedTemplate, PrimaryDomain, Team, TemplateUploadResult, User } from '@/types/api'
 
 export const listTeams = () => apiList<Team>('/api/v1/teams')
 export const createTeam = (input: { name: string; slug: string }) =>
@@ -31,3 +31,25 @@ export const grantTemplate = (versionId: string, teamId: string) =>
   })
 export const revokeTemplateGrant = (versionId: string, teamId: string) =>
   api<null>(`/api/v1/template-versions/${versionId}/grants/${teamId}`, { method: 'DELETE' })
+
+export const listCloudflareConnections = () => apiList<CloudflareConnection>('/api/v1/cloudflare-connections')
+export const createCloudflareConnection = (input: { label: string; account_external_id: string | null; api_token: string }) =>
+  api<CloudflareConnection>('/api/v1/cloudflare-connections', { method: 'POST', body: jsonBody(input) })
+export const updateCloudflareConnection = (id: string, input: Partial<{ label: string; account_external_id: string | null; api_token: string; status: 'unverified'|'disabled' }>) =>
+  api<CloudflareConnection>(`/api/v1/cloudflare-connections/${id}`, { method: 'PATCH', body: jsonBody(input) })
+
+export const listCloudflareZones = () => apiList<CloudflareZone>('/api/v1/cloudflare-zones')
+export const createCloudflareZone = (input: { connection_id: string; external_zone_id: string; zone_name: string }) =>
+  api<CloudflareZone>('/api/v1/cloudflare-zones', { method: 'POST', body: jsonBody(input) })
+export const updateCloudflareZone = (id: string, status: 'unverified'|'disabled') =>
+  api<CloudflareZone>(`/api/v1/cloudflare-zones/${id}`, { method: 'PATCH', body: jsonBody({ status }) })
+
+export const listPrimaryDomains = () => apiList<PrimaryDomain>('/api/v1/primary-domains')
+export const createPrimaryDomain = (input: { zone_id: string; domain_name: string }) =>
+  api<PrimaryDomain>('/api/v1/primary-domains', { method: 'POST', body: jsonBody(input) })
+export const updatePrimaryDomain = (id: string, status: 'active'|'disabled') =>
+  api<PrimaryDomain>(`/api/v1/primary-domains/${id}`, { method: 'PATCH', body: jsonBody({ status }) })
+export const grantPrimaryDomain = (id: string, teamId: string) =>
+  api<null>(`/api/v1/primary-domains/${id}/grants`, { method: 'POST', body: jsonBody({ team_id: teamId }) })
+export const revokePrimaryDomainGrant = (id: string, teamId: string) =>
+  api<null>(`/api/v1/primary-domains/${id}/grants/${teamId}`, { method: 'DELETE' })

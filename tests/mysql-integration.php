@@ -12,13 +12,20 @@ use LandingOps\ControlPlane\Database\MigrationRunner;
 use LandingOps\ControlPlane\Database\PdoFactory;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
+use LandingOps\ControlPlane\Security\AeadSecretCipher;
+use LandingOps\ControlPlane\Service\CloudflareConnectionService;
+use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
+use LandingOps\ControlPlane\Service\TemplateManagementService;
 use LandingOps\ControlPlane\Support\IdGenerator;
+use LandingOps\ControlPlane\Template\PrivateTemplateStorage;
+use LandingOps\ControlPlane\Template\UploadedTemplateFile;
 
 $root = dirname(__DIR__);
 require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
+require_once __DIR__ . '/FixtureFactory.php';
 
 function integrationAssert(bool $condition, string $message): void
 {
@@ -42,6 +49,23 @@ function removeIntegrationDirectory(string $path): void
     foreach (is_dir($path) ? (scandir($path) ?: []) : [] as $entry) {
         if ($entry !== '.' && $entry !== '..') {
             @unlink($path . DIRECTORY_SEPARATOR . $entry);
+        }
+    }
+    @rmdir($path);
+}
+
+function removeIntegrationTree(string $path): void
+{
+    if (!file_exists($path)) {
+        return;
+    }
+    if (is_file($path) || is_link($path)) {
+        @unlink($path);
+        return;
+    }
+    foreach (scandir($path) ?: [] as $entry) {
+        if ($entry !== '.' && $entry !== '..') {
+            removeIntegrationTree($path . DIRECTORY_SEPARATOR . $entry);
         }
     }
     @rmdir($path);
@@ -245,6 +269,7 @@ try {
     $instanceId = $ids->generate();
     $configVersionId = $ids->generate();
 
+    $integrationStorageRoot = null;
     $pdo->beginTransaction();
     try {
         $insertTeam = $pdo->prepare(
@@ -445,6 +470,83 @@ try {
         $grantService->grantBySuperAdmin($super, $templateVersionId, $teamA, 'mysql-template-regrant');
         $templateAccess->assertTemplateVersion($adminA, $teamA, $templateVersionId);
 
+        // Phase 1E/1F：通过真实 PDO 仓储执行完整 ZIP 上传、版本入库、默认授权与授权生命周期。
+        $integrationStorageRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'landingops-mysql-template-' . bin2hex(random_bytes(6));
+        if (!mkdir($integrationStorageRoot, 0700, true) && !is_dir($integrationStorageRoot)) {
+            throw new RuntimeException('无法创建 PDO 模板集成测试目录。');
+        }
+        $zipPath = $integrationStorageRoot . DIRECTORY_SEPARATOR . 'template.zip';
+        \LandingOps\Tests\FixtureFactory::sampleZip($zipPath);
+        $templateManagement = new TemplateManagementService(
+            $repository,
+            new PrivateTemplateStorage($integrationStorageRoot . DIRECTORY_SEPARATOR . 'private'),
+            new AuthorizationService(),
+            grants: $grantService,
+        );
+        $uploaded = $templateManagement->upload(
+            $adminA,
+            new UploadedTemplateFile($zipPath, 'template.zip', (int) filesize($zipPath)),
+            'mysql-template-upload',
+        );
+        integrationAssert($uploaded['validation_status'] === 'valid', '真实 PDO 模板上传未形成有效版本。');
+        integrationAssert(
+            $repository->findTemplateVersionByHash((string) $uploaded['zip_sha256']) !== null,
+            '真实 PDO 模板版本未入库。',
+        );
+        integrationAssert(
+            count($templateManagement->list($adminA)) >= 1,
+            '上传团队未获得默认模板授权或列表不可见。',
+        );
+        $grantService->revokeBySuperAdmin($super, (string) $uploaded['template_version_id'], $teamA, 'mysql-upload-revoke');
+        integrationAssert(
+            array_filter($templateManagement->list($adminA), static fn (array $item): bool => $item['id'] === $uploaded['template_id']) === [],
+            '撤销后上传模板仍对团队可见。',
+        );
+        $grantService->grantBySuperAdmin($super, (string) $uploaded['template_version_id'], $teamA, 'mysql-upload-regrant');
+        integrationAssert(count($templateManagement->list($adminA)) >= 1, '重新授权后模板未恢复可见。');
+
+        // Phase 1F：真实 PDO 上验证密文、连接/Zone/主域名关联及团队授权。
+        $key = random_bytes(32);
+        $cipher = new AeadSecretCipher(['mysql-v1' => $key], 'mysql-v1');
+        $connectionService = new CloudflareConnectionService($repository, $cipher, new AuthorizationService());
+        $domainService = new DomainResourceService($repository, new AuthorizationService());
+        $secretToken = 'mysql-integration-token-' . bin2hex(random_bytes(8));
+        $managedConnection = $connectionService->create($super, [
+            'label' => 'managed-' . strtolower($ids->generate()),
+            'account_external_id' => 'account_' . strtolower($ids->generate()),
+            'api_token' => $secretToken,
+        ], 'mysql-cf-create');
+        $storedConnection = $repository->findCloudflareConnection((string) $managedConnection['id']);
+        integrationAssert(is_array($storedConnection), 'Cloudflare 连接未入库。');
+        integrationAssert(
+            $cipher->decrypt(
+                (string) $storedConnection['token_ciphertext'],
+                (string) $storedConnection['secret_key_version'],
+                'landingops:cloudflare-token:' . $managedConnection['id'],
+            ) === $secretToken,
+            'Cloudflare Token AEAD 回读失败。',
+        );
+        integrationAssert(
+            !str_contains(json_encode($connectionService->list($super), JSON_THROW_ON_ERROR), $secretToken),
+            'Cloudflare Token 泄露到连接列表。',
+        );
+        $managedZone = $domainService->createZone($super, [
+            'connection_id' => $managedConnection['id'],
+            'external_zone_id' => 'external_' . strtolower($ids->generate()),
+            'zone_name' => strtolower($ids->generate()) . '.integration.invalid',
+        ], 'mysql-zone-create');
+        $managedDomain = $domainService->createDomain($super, [
+            'zone_id' => $managedZone['id'],
+            'domain_name' => 'pages.' . $managedZone['normalized_zone_name'],
+        ], 'mysql-domain-create');
+        $domainService->grant($super, (string) $managedDomain['id'], $teamA, 'mysql-domain-grant');
+        integrationAssert(count($domainService->listDomains($adminA)) >= 1, '团队管理员未看到获授权主域名。');
+        integrationAssert($domainService->listDomains(Principal::fromRow($repository->findUserById($staffAId) ?? [])) === [], '未验证资源不应对员工显示为可用。');
+        $domainService->revoke($super, (string) $managedDomain['id'], $teamA, 'mysql-domain-revoke');
+        integrationAssert($domainService->listDomains($adminA) === [], '撤销后团队仍能看到主域名。');
+        $domainService->grant($super, (string) $managedDomain['id'], $teamA, 'mysql-domain-regrant');
+        integrationAssert(count($domainService->listDomains($adminA)) >= 1, '主域名重新授权失败。');
+
         $insertBaota = $pdo->prepare(
             "INSERT INTO baota_config(id,singleton_key,base_url,api_key_ciphertext,secret_key_version,status,"
             . "created_by_user_id,updated_by_user_id,created_at,updated_at) VALUES (?,1,?,?,?,?,?,?,?,?)",
@@ -463,6 +565,9 @@ try {
     } finally {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
+        }
+        if (is_string($integrationStorageRoot)) {
+            removeIntegrationTree($integrationStorageRoot);
         }
     }
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser

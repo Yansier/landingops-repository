@@ -40,13 +40,19 @@ if ($method === 'POST' && $path === '/api/v1/login') {
 if ($method === 'GET' && $path === '/api/v1/me' && hash_equals('secure-cookie-probe', $cookie)) {
     echo json_encode(['data' => [
         'user' => $user,
-        'capabilities' => ['manage_teams' => true, 'manage_users' => true, 'transfer_owner' => true],
+        'capabilities' => [
+            'manage_teams' => true, 'manage_users' => true, 'transfer_owner' => true,
+            'manage_cloudflare' => true, 'manage_domains' => true,
+        ],
         'csrf_token' => 'refreshed-csrf',
     ], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
     return;
 }
 
-if ($method === 'GET' && in_array($path, ['/api/v1/instances', '/api/v1/teams', '/api/v1/users', '/api/v1/templates'], true)
+if ($method === 'GET' && in_array($path, [
+    '/api/v1/instances', '/api/v1/teams', '/api/v1/users', '/api/v1/templates',
+    '/api/v1/cloudflare-connections', '/api/v1/cloudflare-zones', '/api/v1/primary-domains',
+], true)
     && hash_equals('secure-cookie-probe', $cookie)
 ) {
     echo json_encode(['data' => [], 'page' => ['next_cursor' => null, 'has_more' => false], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);

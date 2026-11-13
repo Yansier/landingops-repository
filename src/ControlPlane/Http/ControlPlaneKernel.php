@@ -9,6 +9,8 @@ use LandingOps\ControlPlane\Auth\Role;
 use LandingOps\ControlPlane\Auth\SessionService;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Service\AccountService;
+use LandingOps\ControlPlane\Service\CloudflareConnectionService;
+use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
@@ -28,6 +30,8 @@ final class ControlPlaneKernel
         private readonly RequestId $requestIds = new RequestId(),
         private readonly ?TemplateManagementService $templates = null,
         private readonly ?TemplateGrantService $templateGrants = null,
+        private readonly ?CloudflareConnectionService $cloudflareConnections = null,
+        private readonly ?DomainResourceService $domains = null,
     ) {
     }
 
@@ -216,7 +220,61 @@ final class ControlPlaneKernel
             return $this->success(null, $requestId);
         }
 
-        foreach (['/api/v1/primary-domains', '/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
+        if ($method === 'GET' && $path === '/api/v1/cloudflare-connections') {
+            return $this->list($this->connectionManagement()->list($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/cloudflare-connections') {
+            $this->csrf($request, $session);
+            return $this->success($this->connectionManagement()->create($principal, $request->body, $requestId), $requestId, 201);
+        }
+        if ($method === 'PATCH'
+            && preg_match('~^/api/v1/cloudflare-connections/([0-9A-HJKMNP-TV-Z]{26})$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            return $this->success($this->connectionManagement()->update($principal, $matches[1], $request->body, $requestId), $requestId);
+        }
+        if ($method === 'GET' && $path === '/api/v1/cloudflare-zones') {
+            return $this->list($this->domainManagement()->listZones($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/cloudflare-zones') {
+            $this->csrf($request, $session);
+            return $this->success($this->domainManagement()->createZone($principal, $request->body, $requestId), $requestId, 201);
+        }
+        if ($method === 'PATCH'
+            && preg_match('~^/api/v1/cloudflare-zones/([0-9A-HJKMNP-TV-Z]{26})$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            return $this->success($this->domainManagement()->updateZone($principal, $matches[1], $request->body, $requestId), $requestId);
+        }
+        if ($method === 'GET' && $path === '/api/v1/primary-domains') {
+            return $this->list($this->domainManagement()->listDomains($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/primary-domains') {
+            $this->csrf($request, $session);
+            return $this->success($this->domainManagement()->createDomain($principal, $request->body, $requestId), $requestId, 201);
+        }
+        if ($method === 'PATCH'
+            && preg_match('~^/api/v1/primary-domains/([0-9A-HJKMNP-TV-Z]{26})$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            return $this->success($this->domainManagement()->updateDomain($principal, $matches[1], $request->body, $requestId), $requestId);
+        }
+        if ($method === 'POST'
+            && preg_match('~^/api/v1/primary-domains/([0-9A-HJKMNP-TV-Z]{26})/grants$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            $this->domainManagement()->grant($principal, $matches[1], $this->string($request->body, 'team_id'), $requestId);
+            return $this->success(null, $requestId);
+        }
+        if ($method === 'DELETE'
+            && preg_match('~^/api/v1/primary-domains/([0-9A-HJKMNP-TV-Z]{26})/grants/([0-9A-HJKMNP-TV-Z]{26})$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            $this->domainManagement()->revoke($principal, $matches[1], $matches[2], $requestId);
+            return $this->success(null, $requestId);
+        }
+
+        foreach (['/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
             if (str_starts_with($path, $prefix)) {
                 throw new ApiException(501, 'not_implemented', '该资源接口不属于 Phase 1C。');
             }
@@ -300,6 +358,22 @@ final class ControlPlaneKernel
         return $this->templateGrants;
     }
 
+    private function connectionManagement(): CloudflareConnectionService
+    {
+        if ($this->cloudflareConnections === null) {
+            throw new ApiException(501, 'not_implemented', 'Cloudflare 连接管理服务尚未配置。');
+        }
+        return $this->cloudflareConnections;
+    }
+
+    private function domainManagement(): DomainResourceService
+    {
+        if ($this->domains === null) {
+            throw new ApiException(501, 'not_implemented', '主域名管理服务尚未配置。');
+        }
+        return $this->domains;
+    }
+
     /** @param array<string,mixed> $file */
     private function fileString(array $file, string $key): string
     {
@@ -337,6 +411,8 @@ final class ControlPlaneKernel
             'manage_teams' => $principal->role === Role::SUPER_ADMIN,
             'manage_users' => in_array($principal->role, [Role::SUPER_ADMIN, Role::TEAM_ADMIN], true),
             'transfer_owner' => in_array($principal->role, [Role::SUPER_ADMIN, Role::TEAM_ADMIN], true),
+            'manage_cloudflare' => $principal->role === Role::SUPER_ADMIN,
+            'manage_domains' => $principal->role === Role::SUPER_ADMIN,
         ];
     }
 

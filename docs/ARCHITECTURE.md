@@ -85,6 +85,12 @@ Phase 1E 的模板 ZIP 由控制面 PHP 接收，但先复制到 Web Root 外的
 
 模板可见性和新实例选用权只由服务端查询 `template_grants.status=active` 决定。模板归属、上传者或客户端提交的团队 ID 都不能绕过撤销。总管理员可查看全部版本并授权、撤销或再次授权；撤销不修改已经引用该版本的实例。
 
+### 4.5 Cloudflare 连接与域名登记边界
+
+Phase 1F 只在控制面登记多条 Cloudflare Connection、其 Zone、主域名及团队授权，不加载 Cloudflare SDK，也不发起网络请求。Token 使用 AES-256-GCM、随机 nonce 和记录 ID AAD 进行认证加密；活动密钥版本与密钥环来自进程环境，数据库仅保存密文和版本，API/日志/审计不返回明文或密文。轮换 Token 后连接重新进入 `unverified`。
+
+新连接和人工登记 Zone 固定为 `unverified`；本阶段 API 不能把它们改为 `active`。资源链严格由数据库解析为 `primary_domain -> zone -> connection`，客户端不能以 connection ID 绕过 Zone。团队授权只控制未来选用权；撤销或停用不删除 DNS，也不改变已有实例。员工只有在连接、Zone、主域名均为 active 且团队 grant 有效时才看到可用资源。
+
 ## 5. 任务状态机
 
 ```mermaid

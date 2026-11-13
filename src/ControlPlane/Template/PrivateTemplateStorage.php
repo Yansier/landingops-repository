@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LandingOps\ControlPlane\Template;
 
+use Closure;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\Exception\LandingOpsException;
 use LandingOps\Filesystem\LocalFilesystem;
@@ -14,11 +15,14 @@ final class PrivateTemplateStorage
     public const MAX_ARCHIVE_BYTES = 30 * 1024 * 1024;
 
     private readonly string $root;
+    /** @var Closure(string,string):void */
+    private readonly Closure $copier;
 
     public function __construct(
         string $root,
         private readonly LocalFilesystem $filesystem = new LocalFilesystem(),
         ?string $webRoot = null,
+        ?Closure $copier = null,
     ) {
         $root = rtrim(str_replace('\\', '/', $root), '/');
         if ($root === '' || !self::absolute($root)) {
@@ -42,6 +46,7 @@ final class PrivateTemplateStorage
             }
         }
         $this->root = $resolvedRoot;
+        $this->copier = $copier ?? $this->filesystem->copyFile(...);
         @chmod($this->root, 0700);
     }
 
@@ -78,9 +83,16 @@ final class PrivateTemplateStorage
         $intake = $this->root . DIRECTORY_SEPARATOR . 'intake';
         $this->ensurePrivateDirectory($intake);
         $path = $intake . DIRECTORY_SEPARATOR . bin2hex(random_bytes(16)) . '.zip';
-        $this->filesystem->copyFile($file->temporaryPath, $path);
-        @chmod($path, 0600);
-        return $path;
+        try {
+            ($this->copier)($file->temporaryPath, $path);
+            @chmod($path, 0600);
+            return $path;
+        } catch (\Throwable $exception) {
+            if (is_file($path) || is_link($path)) {
+                @unlink($path);
+            }
+            throw $exception;
+        }
     }
 
     public function persist(ValidatedTemplate $template, string $versionId): string
@@ -90,7 +102,7 @@ final class PrivateTemplateStorage
         $target = $this->resolve($relative);
         $this->ensurePrivateDirectory($this->root . DIRECTORY_SEPARATOR . 'versions');
         $this->ensurePrivateDirectory(dirname($target));
-        $this->filesystem->copyFile($template->archive->path, $target);
+        ($this->copier)($template->archive->path, $target);
         @chmod($target, 0600);
         $actual = hash_file('sha256', $target);
         if (!is_string($actual) || !hash_equals($template->archive->sha256, $actual)) {

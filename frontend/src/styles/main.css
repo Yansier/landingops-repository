@@ -86,6 +86,8 @@ td small{display:block;color:#929daf;margin-top:3px}
 .badge-disabled>span,.badge-failed>span{background:#d95c5c}
 .badge-deploying{background:#fff4e8;color:#af661f}
 .badge-deploying>span{background:#e99946}
+.badge-unverified{background:#fff4e8;color:#a76322}
+.badge-unverified>span{background:#e89a4d}
 .state-card{min-height:240px;background:#fff;border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;color:var(--muted);font-size:13px}
 .state-card p{margin:0 0 4px;max-width:440px;text-align:center}
 .state-card strong{color:var(--ink);font-size:15px}
@@ -249,3 +251,20 @@ input:disabled,select:disabled{background:#f5f6f8;color:#8b95a5}
 .badge-invalid,.badge-revoked{background:#fff0f0;color:#b43d3d}
 .badge-invalid>span,.badge-revoked>span{background:#d95c5c}
 @media(max-width:760px){.template-heading{padding:19px}.template-meta{grid-template-columns:1fr}.template-meta span{border-right:0;border-bottom:1px solid var(--line);padding:10px 19px}.template-meta span:last-child{border-bottom:0}.version-list{padding:4px 19px 17px}.version-main{align-items:flex-start;flex-direction:column}.version-facts{text-align:left}.version-footer{align-items:flex-start}.version-footer .btn{white-space:nowrap}}
+.header-actions{display:flex;gap:9px}
+.domain-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:17px}
+.domain-card{overflow:hidden}
+.domain-card>header{display:flex;align-items:center;gap:12px;padding:20px 22px;border-bottom:1px solid var(--line)}
+.domain-card>header>div:nth-child(2){min-width:0;flex:1}
+.domain-card h2{margin:0 0 4px;font-size:16px;word-break:break-all}
+.domain-card code{font-size:9px;color:#929bad}
+.domain-mark{width:40px;height:40px;border-radius:11px;background:#e9f3ff;color:#3778c2;display:grid;place-items:center;flex:0 0 auto}
+.domain-card dl{margin:0;display:grid;grid-template-columns:1fr 1fr}
+.domain-card dl div{padding:14px 21px;border-bottom:1px solid var(--line)}
+.domain-card dl div:nth-child(odd){border-right:1px solid var(--line)}
+.domain-card dt{font-size:8px;color:#929bad;text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px}
+.domain-card dd{margin:0;font-size:11px;color:#4f5b70;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.domain-card>footer{display:flex;justify-content:flex-end;gap:12px;padding:12px 20px;background:#fafbfc}
+.zone-section{margin-top:18px}
+@media(max-width:900px){.domain-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.header-actions{width:100%;display:grid;grid-template-columns:1fr 1fr}.domain-card dl{grid-template-columns:1fr}.domain-card dl div:nth-child(odd){border-right:0}}

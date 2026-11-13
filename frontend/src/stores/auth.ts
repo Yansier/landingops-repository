@@ -3,7 +3,10 @@ import { defineStore } from 'pinia'
 import { api, ApiError, configureApi, jsonBody } from '@/services/api'
 import type { Capabilities, User } from '@/types/api'
 
-const noCapabilities: Capabilities = { manage_teams: false, manage_users: false, transfer_owner: false }
+const noCapabilities: Capabilities = {
+  manage_teams: false, manage_users: false, transfer_owner: false,
+  manage_cloudflare: false, manage_domains: false,
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)

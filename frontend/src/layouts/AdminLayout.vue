@@ -23,7 +23,7 @@ async function logout() {
       <nav class="main-nav" aria-label="主导航">
         <RouterLink v-for="item in navigationFor(auth.user?.role || 'staff')" :key="item.to" :to="item.to" @click="mobileOpen=false"><IconBase :name="item.icon"/>{{ item.label }}</RouterLink>
       </nav>
-      <div class="future-nav"><small>即将开放</small><span>域名 · 部署任务</span><span>系统设置</span></div>
+      <div class="future-nav"><small>即将开放</small><span>部署任务 · 系统设置</span></div>
       <div class="sidebar-user">
         <span class="avatar">{{ auth.user?.display_name.slice(0,1).toUpperCase() }}</span><div><b>{{ auth.user?.display_name }}</b><small>{{ roleNames[auth.user?.role || 'staff'] }}</small></div>
         <button class="icon-btn" aria-label="退出登录" @click="logout"><IconBase name="logout"/></button>

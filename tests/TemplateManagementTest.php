@@ -228,4 +228,50 @@ return [
         );
         TestHarness::assertContains('Web Root', $exception->getMessage());
     },
+
+    'concurrent first upload slug collision returns explicit conflict' => static function (): void {
+        $repository = new class () extends MemoryControlPlaneRepository {
+            public bool $injectSlugRace = true;
+            public function transaction(callable $callback): mixed
+            {
+                return $callback();
+            }
+            public function insertTemplate(array $template): void
+            {
+                parent::insertTemplate($template);
+                if ($this->injectSlugRace) {
+                    $this->injectSlugRace = false;
+                    throw new \RuntimeException('simulated concurrent unique constraint');
+                }
+            }
+        };
+        [, $principals] = controlFixture();
+        $repository->users = (controlFixture()[0])->users;
+        $repository->teams = (controlFixture()[0])->teams;
+        $root = TestHarness::tempDirectory('template-slug-race');
+        $storage = new PrivateTemplateStorage($root . '/private', webRoot: $root . '/public');
+        $service = new TemplateManagementService($repository, $storage, new AuthorizationService());
+        $exception = TestHarness::assertThrows(
+            static fn () => $service->upload($principals[ADMIN_A_ID], uploadedFixture($root), 'race'),
+            ApiException::class,
+        );
+        TestHarness::assertSame(409, $exception->status);
+        TestHarness::assertSame('template_slug_conflict', $exception->errorCode);
+        TestHarness::assertSame([], storedZipFiles($root . '/private'));
+    },
+
+    'failed staging copy removes partial private file' => static function (): void {
+        $root = TestHarness::tempDirectory('template-partial-stage');
+        $storage = new PrivateTemplateStorage(
+            $root . '/private',
+            webRoot: $root . '/public',
+            copier: static function (string $source, string $target): void {
+                file_put_contents($target, 'partial');
+                throw new LandingOpsException('simulated copy failure');
+            },
+        );
+        $file = uploadedFixture($root);
+        TestHarness::assertThrows(static fn () => $storage->stage($file), LandingOpsException::class);
+        TestHarness::assertSame([], storedZipFiles($root . '/private'));
+    },
 ];

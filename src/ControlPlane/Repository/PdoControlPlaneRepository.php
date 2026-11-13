@@ -363,12 +363,195 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         return $statement->rowCount() === 1;
     }
 
+    public function listCloudflareConnections(): array
+    {
+        return $this->all(
+            'SELECT id,label,account_external_id,token_hint,status,last_verified_at,created_at,updated_at '
+            . 'FROM cloudflare_connections ORDER BY created_at DESC,id DESC',
+        );
+    }
+
+    public function findCloudflareConnection(string $id): ?array
+    {
+        return $this->one('SELECT * FROM cloudflare_connections WHERE id = ?', [$id]);
+    }
+
+    public function findCloudflareConnectionByLabel(string $label): ?array
+    {
+        return $this->one('SELECT * FROM cloudflare_connections WHERE label = ?', [$label]);
+    }
+
+    public function insertCloudflareConnection(array $connection): void
+    {
+        $this->execute(
+            'INSERT INTO cloudflare_connections(id,label,account_external_id,token_ciphertext,secret_key_version,'
+            . 'token_hint,status,last_verified_at,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $connection['id'], $connection['label'], $connection['account_external_id'], $connection['token_ciphertext'],
+                $connection['secret_key_version'], $connection['token_hint'], $connection['status'],
+                $connection['last_verified_at'], $connection['created_by_user_id'], $connection['created_at'], $connection['updated_at'],
+            ],
+        );
+    }
+
+    public function updateCloudflareConnection(string $id, array $changes): void
+    {
+        $allowed = ['label', 'account_external_id', 'token_ciphertext', 'secret_key_version', 'token_hint', 'status', 'last_verified_at', 'updated_at'];
+        $set = [];
+        $values = [];
+        foreach ($allowed as $column) {
+            if (array_key_exists($column, $changes)) {
+                $set[] = $column . ' = ?';
+                $values[] = $changes[$column];
+            }
+        }
+        if ($set === []) {
+            return;
+        }
+        $values[] = $id;
+        $this->execute('UPDATE cloudflare_connections SET ' . implode(', ', $set) . ' WHERE id = ?', $values);
+    }
+
+    public function listCloudflareZones(): array
+    {
+        return $this->all(
+            'SELECT z.id,z.connection_id,z.external_zone_id,z.zone_name,z.normalized_zone_name,z.status,'
+            . 'z.last_synced_at,z.created_at,z.updated_at,c.label AS connection_label,c.status AS connection_status '
+            . 'FROM cloudflare_zones z JOIN cloudflare_connections c ON c.id=z.connection_id '
+            . 'ORDER BY z.created_at DESC,z.id DESC',
+        );
+    }
+
+    public function findCloudflareZone(string $id): ?array
+    {
+        return $this->one(
+            'SELECT z.*,c.label AS connection_label,c.status AS connection_status FROM cloudflare_zones z '
+            . 'JOIN cloudflare_connections c ON c.id=z.connection_id WHERE z.id=?',
+            [$id],
+        );
+    }
+
+    public function findCloudflareZoneByName(string $normalizedName): ?array
+    {
+        return $this->one('SELECT * FROM cloudflare_zones WHERE normalized_zone_name = ?', [$normalizedName]);
+    }
+
+    public function findCloudflareZoneByExternal(string $connectionId, string $externalZoneId): ?array
+    {
+        return $this->one(
+            'SELECT * FROM cloudflare_zones WHERE connection_id = ? AND external_zone_id = ?',
+            [$connectionId, $externalZoneId],
+        );
+    }
+
+    public function insertCloudflareZone(array $zone): void
+    {
+        $this->execute(
+            'INSERT INTO cloudflare_zones(id,connection_id,external_zone_id,zone_name,normalized_zone_name,status,'
+            . 'last_synced_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+            [
+                $zone['id'], $zone['connection_id'], $zone['external_zone_id'], $zone['zone_name'],
+                $zone['normalized_zone_name'], $zone['status'], $zone['last_synced_at'], $zone['created_at'], $zone['updated_at'],
+            ],
+        );
+    }
+
+    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void
+    {
+        $this->execute('UPDATE cloudflare_zones SET status=?,updated_at=? WHERE id=?', [$status, $at, $id]);
+    }
+
+    public function listPrimaryDomains(?string $teamId, bool $usableOnly): array
+    {
+        $sql = 'SELECT d.id,d.zone_id,d.domain_name,d.normalized_domain_name,d.status AS domain_status,d.created_at,d.updated_at,'
+            . 'z.zone_name,z.normalized_zone_name,z.status AS zone_status,z.connection_id,'
+            . 'c.label AS connection_label,c.status AS connection_status '
+            . 'FROM primary_domains d JOIN cloudflare_zones z ON z.id=d.zone_id '
+            . 'JOIN cloudflare_connections c ON c.id=z.connection_id';
+        $where = [];
+        $parameters = [];
+        if ($teamId !== null) {
+            $where[] = "EXISTS (SELECT 1 FROM domain_grants g WHERE g.primary_domain_id=d.id AND g.team_id=? AND g.status='active')";
+            $parameters[] = $teamId;
+        }
+        if ($usableOnly) {
+            $where[] = "d.status='active' AND z.status='active' AND c.status='active'";
+        }
+        if ($where !== []) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        return $this->all($sql . ' ORDER BY d.created_at DESC,d.id DESC', $parameters);
+    }
+
+    public function findPrimaryDomain(string $id): ?array
+    {
+        return $this->one(
+            'SELECT d.*,z.status AS zone_status,z.normalized_zone_name,z.connection_id,c.status AS connection_status '
+            . 'FROM primary_domains d JOIN cloudflare_zones z ON z.id=d.zone_id '
+            . 'JOIN cloudflare_connections c ON c.id=z.connection_id WHERE d.id=?',
+            [$id],
+        );
+    }
+
+    public function findPrimaryDomainByName(string $normalizedName): ?array
+    {
+        return $this->one('SELECT * FROM primary_domains WHERE normalized_domain_name = ?', [$normalizedName]);
+    }
+
+    public function insertPrimaryDomain(array $domain): void
+    {
+        $this->execute(
+            'INSERT INTO primary_domains(id,zone_id,domain_name,normalized_domain_name,status,dns_policy_json,'
+            . 'created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+            [
+                $domain['id'], $domain['zone_id'], $domain['domain_name'], $domain['normalized_domain_name'],
+                $domain['status'], $domain['dns_policy_json'], $domain['created_by_user_id'], $domain['created_at'], $domain['updated_at'],
+            ],
+        );
+    }
+
+    public function updatePrimaryDomainStatus(string $id, string $status, string $at): void
+    {
+        $this->execute('UPDATE primary_domains SET status=?,updated_at=? WHERE id=?', [$status, $at, $id]);
+    }
+
+    public function listDomainGrants(string $primaryDomainId): array
+    {
+        return $this->all(
+            'SELECT g.team_id,t.name AS team_name,g.status,g.granted_at,g.revoked_at FROM domain_grants g '
+            . 'JOIN teams t ON t.id=g.team_id WHERE g.primary_domain_id=? ORDER BY t.name,t.id',
+            [$primaryDomainId],
+        );
+    }
+
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool
     {
         return $this->exists(
             "SELECT 1 FROM domain_grants WHERE primary_domain_id = ? AND team_id = ? AND status = 'active'",
             [$primaryDomainId, $teamId],
         );
+    }
+
+    public function grantPrimaryDomain(array $grant): void
+    {
+        $this->execute(
+            "INSERT INTO domain_grants(id,primary_domain_id,team_id,status,granted_by_user_id,granted_at,revoked_at) "
+            . "VALUES (?,?,?,'active',?,?,NULL) ON DUPLICATE KEY UPDATE status='active',"
+            . 'granted_by_user_id=VALUES(granted_by_user_id),granted_at=VALUES(granted_at),revoked_at=NULL',
+            [
+                $grant['id'], $grant['primary_domain_id'], $grant['team_id'],
+                $grant['granted_by_user_id'], $grant['granted_at'],
+            ],
+        );
+    }
+
+    public function revokePrimaryDomainGrant(string $primaryDomainId, string $teamId, string $at): bool
+    {
+        $statement = $this->execute(
+            "UPDATE domain_grants SET status='revoked',revoked_at=? WHERE primary_domain_id=? AND team_id=? AND status='active'",
+            [$at, $primaryDomainId, $teamId],
+        );
+        return $statement->rowCount() === 1;
     }
 
     public function insertAudit(array $audit): void

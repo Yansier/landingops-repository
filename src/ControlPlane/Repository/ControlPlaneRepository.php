@@ -69,7 +69,42 @@ interface ControlPlaneRepository
         string $actorUserId,
         string $at,
     ): bool;
+    /** @return list<array<string,mixed>> */
+    public function listCloudflareConnections(): array;
+    /** @return array<string,mixed>|null */
+    public function findCloudflareConnection(string $id): ?array;
+    /** @return array<string,mixed>|null */
+    public function findCloudflareConnectionByLabel(string $label): ?array;
+    /** @param array<string,mixed> $connection */
+    public function insertCloudflareConnection(array $connection): void;
+    /** @param array<string,mixed> $changes */
+    public function updateCloudflareConnection(string $id, array $changes): void;
+    /** @return list<array<string,mixed>> */
+    public function listCloudflareZones(): array;
+    /** @return array<string,mixed>|null */
+    public function findCloudflareZone(string $id): ?array;
+    /** @return array<string,mixed>|null */
+    public function findCloudflareZoneByName(string $normalizedName): ?array;
+    /** @return array<string,mixed>|null */
+    public function findCloudflareZoneByExternal(string $connectionId, string $externalZoneId): ?array;
+    /** @param array<string,mixed> $zone */
+    public function insertCloudflareZone(array $zone): void;
+    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void;
+    /** @return list<array<string,mixed>> */
+    public function listPrimaryDomains(?string $teamId, bool $usableOnly): array;
+    /** @return array<string,mixed>|null */
+    public function findPrimaryDomain(string $id): ?array;
+    /** @return array<string,mixed>|null */
+    public function findPrimaryDomainByName(string $normalizedName): ?array;
+    /** @param array<string,mixed> $domain */
+    public function insertPrimaryDomain(array $domain): void;
+    public function updatePrimaryDomainStatus(string $id, string $status, string $at): void;
+    /** @return list<array<string,mixed>> */
+    public function listDomainGrants(string $primaryDomainId): array;
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool;
+    /** @param array<string,mixed> $grant */
+    public function grantPrimaryDomain(array $grant): void;
+    public function revokePrimaryDomainGrant(string $primaryDomainId, string $teamId, string $at): bool;
     /** @param array<string,mixed> $audit */
     public function insertAudit(array $audit): void;
 }

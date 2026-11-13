@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureApi } from './api'
-import { createUser, disableUser, grantTemplate, listInstances, revokeTemplateGrant, transferOwner, uploadTemplate } from './resources'
+import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, revokePrimaryDomainGrant, revokeTemplateGrant, transferOwner, updateCloudflareConnection, uploadTemplate } from './resources'
 
 const ok=(data:unknown)=>new Response(JSON.stringify({data,request_id:'req'}),{status:200,headers:{'Content-Type':'application/json'}})
 describe('业务请求契约',()=>{
@@ -34,5 +34,19 @@ describe('业务请求契约',()=>{
     expect(fetchMock.mock.calls[1][0]).toContain('/grants')
     expect(fetchMock.mock.calls[1][1].method).toBe('POST')
     expect(fetchMock.mock.calls[2][1].method).toBe('DELETE')
+  })
+  it('Cloudflare 与主域名接口不回传客户端推断状态',async()=>{
+    fetchMock.mockImplementation(()=>Promise.resolve(ok({id:'resource'})))
+    await createCloudflareConnection({label:'Account',account_external_id:'acct',api_token:'secret-token'})
+    await updateCloudflareConnection('01ARZ3NDEKTSV4RRFFQ69G5FAV',{api_token:'rotated-token'})
+    await createPrimaryDomain({zone_id:'01ARZ3NDEKTSV4RRFFQ69G5FAA',domain_name:'pages.example.com'})
+    await grantPrimaryDomain('01ARZ3NDEKTSV4RRFFQ69G5FAV','01ARZ3NDEKTSV4RRFFQ69G5FAA')
+    await revokePrimaryDomainGrant('01ARZ3NDEKTSV4RRFFQ69G5FAV','01ARZ3NDEKTSV4RRFFQ69G5FAA')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/cloudflare-connections')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('status')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({api_token:'rotated-token'})
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({zone_id:'01ARZ3NDEKTSV4RRFFQ69G5FAA',domain_name:'pages.example.com'})
+    expect(fetchMock.mock.calls[3][0]).toContain('/primary-domains/')
+    expect(fetchMock.mock.calls[4][1].method).toBe('DELETE')
   })
 })

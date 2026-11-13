@@ -39,6 +39,8 @@ export interface Capabilities {
   manage_teams: boolean
   manage_users: boolean
   transfer_owner: boolean
+  manage_cloudflare: boolean
+  manage_domains: boolean
 }
 
 export interface ValidationIssue { code: string; message: string; path: string | null }
@@ -83,6 +85,55 @@ export interface TemplateUploadResult {
   zip_sha256: string
   validation_status: 'valid'
   validation_report: ValidationReport
+}
+
+export type VerificationStatus = 'active' | 'unverified' | 'disabled'
+export interface CloudflareConnection {
+  id: string
+  label: string
+  account_external_id: string | null
+  token_hint: string
+  status: VerificationStatus
+  last_verified_at: string | null
+  created_at: string
+  updated_at: string
+}
+export interface CloudflareZone {
+  id: string
+  connection_id: string
+  external_zone_id: string
+  zone_name: string
+  normalized_zone_name: string
+  status: VerificationStatus
+  connection_label: string
+  connection_status: VerificationStatus
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
+}
+export interface DomainGrant {
+  team_id: string
+  team_name: string
+  status: 'active' | 'revoked'
+  granted_at: string
+  revoked_at: string | null
+}
+export interface PrimaryDomain {
+  id: string
+  zone_id: string
+  domain_name: string
+  normalized_domain_name: string
+  domain_status: 'active' | 'disabled'
+  zone_name: string
+  normalized_zone_name: string
+  zone_status: VerificationStatus
+  connection_id: string
+  connection_label: string
+  connection_status: VerificationStatus
+  available: boolean
+  grants: DomainGrant[]
+  created_at: string
+  updated_at: string
 }
 
 export interface ApiEnvelope<T> { data: T; request_id: string }

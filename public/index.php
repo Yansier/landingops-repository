@@ -11,6 +11,9 @@ use LandingOps\ControlPlane\Http\Request;
 use LandingOps\ControlPlane\Http\RequestId;
 use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Service\AccountService;
+use LandingOps\ControlPlane\Security\AeadSecretCipher;
+use LandingOps\ControlPlane\Service\CloudflareConnectionService;
+use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
@@ -109,6 +112,12 @@ try {
         $authorization,
         grants: $templateGrants,
     );
+    $cloudflareConnections = new CloudflareConnectionService(
+        $repository,
+        AeadSecretCipher::fromEnvironment(),
+        $authorization,
+    );
+    $domains = new DomainResourceService($repository, $authorization);
     $kernel = new ControlPlaneKernel(
         new SessionService($repository),
         new AccountService($repository, $authorization),
@@ -116,6 +125,8 @@ try {
         new OwnershipTransferService($repository, $authorization),
         templates: $templateManagement,
         templateGrants: $templateGrants,
+        cloudflareConnections: $cloudflareConnections,
+        domains: $domains,
     );
 
     $response = $kernel->handle(new Request(

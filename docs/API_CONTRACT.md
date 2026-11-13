@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-本文固定 V1 的资源、授权、并发和错误语义，也标明 Phase 1C 已实现的 PHP 控制面子集。它不是第三方宝塔/Cloudflare 端点声明；第三方调用只能由后端适配器执行，Phase 1C 不执行任何第三方调用。
+本文固定 V1 的资源、授权、并发和错误语义，也标明当前 PHP 控制面子集。它不是第三方宝塔/Cloudflare 端点声明；Phase 1F 只登记 Cloudflare 元数据和密文，不执行任何第三方调用。
 
 建议前缀 `/api/v1`，JSON 使用 UTF-8、`snake_case`；时间为 UTC RFC 3339；资源 ID 为不可枚举 UUID/ULID。生产只允许 HTTPS。
 
@@ -76,7 +76,7 @@
 | `POST /template-versions/{id}/grants` | 总管理员 | 授权一个团队 |
 | `DELETE /template-versions/{id}/grants/{team_id}` | 总管理员 | 撤销未来使用权，不操作实例 |
 
-上传响应必须包含版本 ID、SHA-256 和验证状态。相同内容返回 `409 template_hash_conflict`；相同 `slug + version` 不同哈希返回 `409 template_version_immutable`；LTS 校验失败返回 `422 template_validation_failed` 及脱敏报告。响应永不包含私有绝对路径或 `zip_storage_key`。
+上传响应必须包含版本 ID、SHA-256 和验证状态。相同内容返回 `409 template_hash_conflict`；相同 `slug + version` 不同哈希返回 `409 template_version_immutable`；并发首次创建相同 slug 返回 `409 template_slug_conflict`；LTS 校验失败返回 `422 template_validation_failed` 及脱敏报告。响应永不包含私有绝对路径或 `zip_storage_key`。
 
 团队管理员上传的版本落库后，服务端依据会话用户、版本上传者和模板数据库归属，为上传团队创建默认 `active` grant。后续选用模板只检查服务端 `template_grants.status=active`；客户端不得提交 `owner_team_id` 作为授权依据。总管理员可撤销或再次授权，模板所有权不能绕过已撤销 grant。撤销只阻止该团队用此版本创建新实例，不修改已经绑定该版本的实例、release 或运行文件；总管理员仍拥有所有已存在模板版本的最高访问权限。
 
@@ -86,14 +86,18 @@
 | --- | --- | --- |
 | `GET/PUT /settings/baota` | 总管理员 | 读取脱敏状态/创建或轮换唯一配置；不得创建第二条 |
 | `GET /cloudflare-connections` | 总管理员 | 返回 label、token_hint、状态，不返回密文 |
-| `POST /cloudflare-connections` | 总管理员 | 保存加密 Token；验证与保存应分阶段报告 |
-| `PATCH /cloudflare-connections/{id}` | 总管理员 | 轮换 Token/停用，带 version |
-| `POST /cloudflare-connections/{id}/zones/import` | 总管理员 | 导入明确 Zone；阻止重复规范化名称 |
+| `POST /cloudflare-connections` | 总管理员 | 使用环境主密钥认证加密 Token；新连接固定为 `unverified` |
+| `PATCH /cloudflare-connections/{id}` | 总管理员 | 修改元数据、轮换 Token 或停用；轮换后重置为 `unverified` |
+| `GET /cloudflare-zones` | 总管理员 | 列出 Zone 与其唯一连接；不返回 Token |
+| `POST /cloudflare-zones` | 总管理员 | 人工登记明确 Zone；固定为 `unverified`，不调用 Cloudflare |
+| `PATCH /cloudflare-zones/{id}` | 总管理员 | 本阶段仅允许 `unverified/disabled`，不能伪造验证成功 |
 | `GET /primary-domains` | 所有角色 | 自动限制到有权使用的主域名 |
+| `POST /primary-domains` | 总管理员 | 在明确 Zone 下登记规范化主域名，不创建 DNS |
+| `PATCH /primary-domains/{id}` | 总管理员 | 启用/停用登记资源，不修改 DNS |
 | `POST /primary-domains/{id}/grants` | 总管理员 | 授权团队 |
 | `DELETE /primary-domains/{id}/grants/{team_id}` | 总管理员 | 撤销未来创建权限，不改 DNS/实例 |
 
-任意连接“测试”操作必须有 SSRF 防护、超时、限流和脱敏日志。员工不能提交 connection ID 来改变 Zone 路由。
+`api_token` 只在创建/轮换请求体中出现；响应、普通日志和审计不得包含明文或密文。未配置环境密钥时 Token 写入返回 `503 secret_key_unavailable`，而不是明文降级。总管理员看到全部资源；团队管理员看到本团队有效授权（包括明确标记的不可用状态）；员工只看到授权且连接、Zone、主域名均为 `active` 的可用资源。任意未来连接“测试”操作仍须有 SSRF 防护、超时、限流和脱敏日志。员工不能提交 connection ID 来改变 Zone 路由。
 
 V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、TTL Auto，不自动创建 AAAA/CNAME/通配符；这些值只能由总管理员在真实环境确认后按主域名显式调整。
 

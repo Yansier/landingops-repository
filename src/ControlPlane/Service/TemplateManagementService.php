@@ -199,6 +199,9 @@ final class TemplateManagementService
                 if ($this->repository->findTemplateVersionByTemplateAndVersion($templateId, $versionName) !== null) {
                     throw new ApiException(409, 'template_version_immutable', '该模板版本号已经存在且不可覆盖。');
                 }
+                if ($template === null && $this->repository->findTemplateBySlug($slug) !== null) {
+                    throw new ApiException(409, 'template_slug_conflict', '相同 slug 的模板已由另一个上传请求创建。');
+                }
                 throw $exception;
             }
 

@@ -11,7 +11,7 @@ use Throwable;
 /**
  * 仅用于不依赖数据库驱动的服务层契约测试；不宣称模拟 MySQL 行为。
  */
-final class MemoryControlPlaneRepository implements ControlPlaneRepository
+class MemoryControlPlaneRepository implements ControlPlaneRepository
 {
     /** @var array<string,array<string,mixed>> */
     public array $users = [];
@@ -31,7 +31,13 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
     public array $templateVersions = [];
     /** @var array<string,array<string,mixed>> */
     public array $templateGrants = [];
-    /** @var array<string,bool> */
+    /** @var array<string,array<string,mixed>> */
+    public array $cloudflareConnections = [];
+    /** @var array<string,array<string,mixed>> */
+    public array $cloudflareZones = [];
+    /** @var array<string,array<string,mixed>> */
+    public array $primaryDomains = [];
+    /** @var array<string,array<string,mixed>|bool> */
     public array $domainGrants = [];
 
     public function transaction(callable $callback): mixed
@@ -46,6 +52,9 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
             $this->templates,
             $this->templateVersions,
             $this->templateGrants,
+            $this->cloudflareConnections,
+            $this->cloudflareZones,
+            $this->primaryDomains,
             $this->domainGrants,
         ]);
         try {
@@ -61,6 +70,9 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
                 $this->templates,
                 $this->templateVersions,
                 $this->templateGrants,
+                $this->cloudflareConnections,
+                $this->cloudflareZones,
+                $this->primaryDomains,
                 $this->domainGrants,
             ] = unserialize($snapshot, ['allowed_classes' => false]);
             throw $exception;
@@ -399,9 +411,211 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
         return true;
     }
 
+    public function listCloudflareConnections(): array
+    {
+        return array_values(array_map(static fn (array $row): array => array_diff_key(
+            $row,
+            ['token_ciphertext' => true, 'secret_key_version' => true],
+        ), $this->cloudflareConnections));
+    }
+
+    public function findCloudflareConnection(string $id): ?array
+    {
+        return $this->cloudflareConnections[$id] ?? null;
+    }
+
+    public function findCloudflareConnectionByLabel(string $label): ?array
+    {
+        foreach ($this->cloudflareConnections as $row) {
+            if (($row['label'] ?? null) === $label) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    public function insertCloudflareConnection(array $connection): void
+    {
+        if ($this->findCloudflareConnectionByLabel((string) $connection['label']) !== null) {
+            throw new RuntimeException('duplicate cloudflare connection');
+        }
+        $this->cloudflareConnections[(string) $connection['id']] = $connection;
+    }
+
+    public function updateCloudflareConnection(string $id, array $changes): void
+    {
+        if (isset($changes['label'])) {
+            $other = $this->findCloudflareConnectionByLabel((string) $changes['label']);
+            if ($other !== null && ($other['id'] ?? null) !== $id) {
+                throw new RuntimeException('duplicate cloudflare connection');
+            }
+        }
+        $this->cloudflareConnections[$id] = array_replace($this->cloudflareConnections[$id] ?? [], $changes);
+    }
+
+    public function listCloudflareZones(): array
+    {
+        $rows = [];
+        foreach ($this->cloudflareZones as $zone) {
+            $connection = $this->cloudflareConnections[(string) $zone['connection_id']] ?? [];
+            $rows[] = $zone + ['connection_label' => $connection['label'] ?? null, 'connection_status' => $connection['status'] ?? null];
+        }
+        return $rows;
+    }
+
+    public function findCloudflareZone(string $id): ?array
+    {
+        $zone = $this->cloudflareZones[$id] ?? null;
+        if ($zone === null) {
+            return null;
+        }
+        $connection = $this->cloudflareConnections[(string) $zone['connection_id']] ?? [];
+        return $zone + ['connection_label' => $connection['label'] ?? null, 'connection_status' => $connection['status'] ?? null];
+    }
+
+    public function findCloudflareZoneByName(string $normalizedName): ?array
+    {
+        foreach ($this->cloudflareZones as $row) {
+            if (($row['normalized_zone_name'] ?? null) === $normalizedName) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    public function findCloudflareZoneByExternal(string $connectionId, string $externalZoneId): ?array
+    {
+        foreach ($this->cloudflareZones as $row) {
+            if (($row['connection_id'] ?? null) === $connectionId
+                && ($row['external_zone_id'] ?? null) === $externalZoneId) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    public function insertCloudflareZone(array $zone): void
+    {
+        if (!isset($this->cloudflareConnections[(string) $zone['connection_id']])
+            || $this->findCloudflareZoneByName((string) $zone['normalized_zone_name']) !== null
+        ) {
+            throw new RuntimeException('invalid or duplicate cloudflare zone');
+        }
+        if ($this->findCloudflareZoneByExternal((string) $zone['connection_id'], (string) $zone['external_zone_id']) !== null) {
+            throw new RuntimeException('duplicate external zone');
+        }
+        $this->cloudflareZones[(string) $zone['id']] = $zone;
+    }
+
+    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void
+    {
+        $this->cloudflareZones[$id]['status'] = $status;
+        $this->cloudflareZones[$id]['updated_at'] = $at;
+    }
+
+    public function listPrimaryDomains(?string $teamId, bool $usableOnly): array
+    {
+        $rows = [];
+        foreach ($this->primaryDomains as $domain) {
+            if ($teamId !== null && !$this->hasDomainGrant((string) $domain['id'], $teamId)) {
+                continue;
+            }
+            $zone = $this->findCloudflareZone((string) $domain['zone_id']);
+            if ($zone === null) {
+                continue;
+            }
+            if ($usableOnly && (($domain['status'] ?? null) !== 'active'
+                || ($zone['status'] ?? null) !== 'active' || ($zone['connection_status'] ?? null) !== 'active')) {
+                continue;
+            }
+            $rows[] = [
+                'id' => $domain['id'], 'zone_id' => $domain['zone_id'], 'domain_name' => $domain['domain_name'],
+                'normalized_domain_name' => $domain['normalized_domain_name'], 'domain_status' => $domain['status'],
+                'created_at' => $domain['created_at'], 'updated_at' => $domain['updated_at'],
+                'zone_name' => $zone['zone_name'], 'normalized_zone_name' => $zone['normalized_zone_name'],
+                'zone_status' => $zone['status'], 'connection_id' => $zone['connection_id'],
+                'connection_label' => $zone['connection_label'], 'connection_status' => $zone['connection_status'],
+            ];
+        }
+        return $rows;
+    }
+
+    public function findPrimaryDomain(string $id): ?array
+    {
+        $domain = $this->primaryDomains[$id] ?? null;
+        if ($domain === null) {
+            return null;
+        }
+        $zone = $this->findCloudflareZone((string) $domain['zone_id']);
+        return $zone === null ? null : $domain + [
+            'zone_status' => $zone['status'], 'normalized_zone_name' => $zone['normalized_zone_name'],
+            'connection_id' => $zone['connection_id'], 'connection_status' => $zone['connection_status'],
+        ];
+    }
+
+    public function findPrimaryDomainByName(string $normalizedName): ?array
+    {
+        foreach ($this->primaryDomains as $row) {
+            if (($row['normalized_domain_name'] ?? null) === $normalizedName) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    public function insertPrimaryDomain(array $domain): void
+    {
+        if (!isset($this->cloudflareZones[(string) $domain['zone_id']])
+            || $this->findPrimaryDomainByName((string) $domain['normalized_domain_name']) !== null) {
+            throw new RuntimeException('invalid or duplicate primary domain');
+        }
+        $this->primaryDomains[(string) $domain['id']] = $domain;
+    }
+
+    public function updatePrimaryDomainStatus(string $id, string $status, string $at): void
+    {
+        $this->primaryDomains[$id]['status'] = $status;
+        $this->primaryDomains[$id]['updated_at'] = $at;
+    }
+
+    public function listDomainGrants(string $primaryDomainId): array
+    {
+        $rows = [];
+        foreach ($this->domainGrants as $grant) {
+            if (!is_array($grant) || ($grant['primary_domain_id'] ?? null) !== $primaryDomainId) {
+                continue;
+            }
+            $team = $this->teams[(string) $grant['team_id']] ?? [];
+            $rows[] = [
+                'team_id' => $grant['team_id'], 'team_name' => $team['name'] ?? '', 'status' => $grant['status'],
+                'granted_at' => $grant['granted_at'], 'revoked_at' => $grant['revoked_at'] ?? null,
+            ];
+        }
+        return $rows;
+    }
+
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool
     {
-        return $this->domainGrants[$primaryDomainId . ':' . $teamId] ?? false;
+        $grant = $this->domainGrants[$primaryDomainId . ':' . $teamId] ?? null;
+        return $grant === true || (is_array($grant) && ($grant['status'] ?? null) === 'active');
+    }
+
+    public function grantPrimaryDomain(array $grant): void
+    {
+        $key = $grant['primary_domain_id'] . ':' . $grant['team_id'];
+        $this->domainGrants[$key] = $grant + ['status' => 'active', 'revoked_at' => null];
+    }
+
+    public function revokePrimaryDomainGrant(string $primaryDomainId, string $teamId, string $at): bool
+    {
+        $key = $primaryDomainId . ':' . $teamId;
+        $grant = $this->domainGrants[$key] ?? null;
+        if (!is_array($grant) || ($grant['status'] ?? null) !== 'active') {
+            return false;
+        }
+        $this->domainGrants[$key]['status'] = 'revoked';
+        $this->domainGrants[$key]['revoked_at'] = $at;
+        return true;
     }
 
     public function insertAudit(array $audit): void
