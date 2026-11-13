@@ -1,0 +1,463 @@
+<!-- index2 -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="theme-color" content="#FDF2F8">
+  <title>Éclate-bulles</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #64748b;
+      --bg: #fdf2f8;
+      --card: #ffffff;
+      --primary: #be185d;
+      --primary-deep: #9d174d;
+      --gold: #b45309;
+      --line: #fbcfe8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      height: 100%;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      background:
+        radial-gradient(circle at 12% 8%, #fce7f3 0 18%, transparent 19%),
+        radial-gradient(circle at 88% 0%, #ede9fe 0 16%, transparent 17%),
+        var(--bg);
+      color: var(--ink);
+      font-family: Nunito, "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .app {
+      position: relative;
+      width: min(480px, 100%);
+      height: 100vh;
+      height: 100dvh;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding-top: env(safe-area-inset-top);
+    }
+
+    .hud {
+      flex: none;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px 8px calc(16px + env(safe-area-inset-left));
+      padding-right: calc(16px + env(safe-area-inset-right));
+    }
+
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat.right { align-items: flex-end; }
+
+    .label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .stat strong {
+      font-family: Fredoka, Nunito, sans-serif;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 700;
+    }
+
+    .lives {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pip {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid var(--primary-deep);
+      box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45);
+    }
+
+    .pip.off {
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .field {
+      position: relative;
+      flex: 1;
+      margin: 0 12px 12px;
+      margin-bottom: calc(12px + env(safe-area-inset-bottom));
+      border-radius: 28px;
+      border: 3px solid #f9a8d4;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 8px 8px 0 rgba(190, 24, 93, 0.12);
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    .bubble {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      border: 3px solid var(--edge);
+      background:
+        radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.95), transparent 36%),
+        var(--fill);
+      box-shadow: 4px 4px 0 rgba(15, 23, 42, 0.08), inset 0 -6px 0 rgba(15, 23, 42, 0.06);
+      color: var(--ink);
+      font-family: Fredoka, Nunito, sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .bubble:focus-visible {
+      outline: 3px solid var(--gold);
+      outline-offset: 3px;
+    }
+
+    .bubble.pop {
+      animation: burst 160ms ease-out forwards;
+    }
+
+    .overlay[hidden] {
+      display: none;
+    }
+
+    .float-score {
+      position: absolute;
+      color: var(--primary);
+      font-family: Fredoka, Nunito, sans-serif;
+      font-weight: 700;
+      font-size: 20px;
+      pointer-events: none;
+      animation: rise 420ms ease-out forwards;
+    }
+
+    @keyframes burst {
+      to { scale: 1.25; opacity: 0; }
+    }
+
+    @keyframes rise {
+      to { transform: translateY(-28px); opacity: 0; }
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding:
+        calc(24px + env(safe-area-inset-top))
+        calc(24px + env(safe-area-inset-right))
+        calc(24px + env(safe-area-inset-bottom))
+        calc(24px + env(safe-area-inset-left));
+      background: rgba(253, 242, 248, 0.82);
+    }
+
+    .card {
+      width: min(340px, 100%);
+      padding: 28px 22px 22px;
+      text-align: center;
+      border-radius: 24px;
+      border: 3px solid #f9a8d4;
+      background: var(--card);
+      box-shadow: 8px 8px 0 rgba(190, 24, 93, 0.16);
+    }
+
+    .kicker {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      color: var(--primary);
+    }
+
+    h1 {
+      margin-top: 6px;
+      font-family: Fredoka, Nunito, sans-serif;
+      font-size: 40px;
+      line-height: 1.1;
+      font-weight: 700;
+    }
+
+    .rules {
+      margin-top: 12px;
+      font-size: 16px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .btn {
+      margin-top: 20px;
+      min-width: 148px;
+      min-height: 48px;
+      padding: 0 28px;
+      border: 3px solid var(--primary-deep);
+      border-radius: 16px;
+      background: var(--primary);
+      color: #fff;
+      font-family: Fredoka, Nunito, sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 0 var(--primary-deep);
+    }
+
+    .btn:hover { filter: brightness(1.05); }
+    .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--primary-deep); }
+    .btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+
+    .best {
+      margin-top: 14px;
+      min-height: 1.4em;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--gold);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bubble.pop,
+      .float-score { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="hud">
+      <div class="stat">
+        <span class="label">Score</span>
+        <strong id="score">0</strong>
+      </div>
+      <div class="lives" id="lives" aria-label="Chances restantes : 3"></div>
+      <div class="stat right">
+        <span class="label">Temps</span>
+        <strong id="time">30</strong>
+      </div>
+    </header>
+    <div class="field" id="field"></div>
+    <section class="overlay" id="overlay">
+      <div class="card">
+        <p class="kicker">INDEX2</p>
+        <h1 id="title">Éclate-bulles</h1>
+        <p class="rules" id="message">Éclatez les bulles qui montent pendant 30 secondes. Plus elles sont petites, plus elles rapportent de points. La partie s’arrête après 3 bulles manquées.</p>
+        <button class="btn" id="action" type="button">Commencer</button>
+        <p class="best" id="bestLine"></p>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const ROUND = 30;
+    const LIVES = 3;
+    const BEST_KEY = "index2-best";
+
+    const field = document.getElementById("field");
+    const scoreEl = document.getElementById("score");
+    const timeEl = document.getElementById("time");
+    const livesEl = document.getElementById("lives");
+    const overlay = document.getElementById("overlay");
+    const titleEl = document.getElementById("title");
+    const messageEl = document.getElementById("message");
+    const actionBtn = document.getElementById("action");
+    const bestLine = document.getElementById("bestLine");
+
+    const kinds = [
+      { size: 76, points: 1, fill: "#fbcfe8", edge: "#be185d" },
+      { size: 60, points: 2, fill: "#ddd6fe", edge: "#6d28d9" },
+      { size: 46, points: 3, fill: "#fde68a", edge: "#b45309" }
+    ];
+
+    let score = 0;
+    let lives = LIVES;
+    let left = ROUND;
+    let running = false;
+    let last = 0;
+    let spawnIn = 0.4;
+    let bubbles = [];
+    let raf = 0;
+
+    function bestScore() {
+      return Number(localStorage.getItem(BEST_KEY) || 0);
+    }
+
+    function showBest() {
+      const best = bestScore();
+      bestLine.textContent = best > 0 ? "Meilleur score : " + best : "";
+    }
+
+    function drawLives() {
+      livesEl.setAttribute("aria-label", "Chances restantes : " + lives);
+      livesEl.replaceChildren();
+      for (let i = 0; i < LIVES; i += 1) {
+        const pip = document.createElement("span");
+        pip.className = "pip" + (i < lives ? "" : " off");
+        livesEl.appendChild(pip);
+      }
+    }
+
+    function resetHud() {
+      score = 0;
+      lives = LIVES;
+      left = ROUND;
+      scoreEl.textContent = "0";
+      timeEl.textContent = String(ROUND);
+      drawLives();
+    }
+
+    function spawn() {
+      const kind = kinds[Math.floor(Math.random() * kinds.length)];
+      const width = field.clientWidth;
+      const maxX = Math.max(0, width - kind.size - 16);
+      let x = 8 + Math.random() * maxX;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const candidate = 8 + Math.random() * maxX;
+        const crowded = bubbles.some((item) => {
+          if (item.gone || item.y > 160) return false;
+          return Math.abs(candidate - item.x) < (kind.size + item.size) * 0.62;
+        });
+        if (!crowded) {
+          x = candidate;
+          break;
+        }
+      }
+      const bubble = document.createElement("button");
+      bubble.type = "button";
+      bubble.className = "bubble";
+      bubble.textContent = String(kind.points);
+      bubble.setAttribute("aria-label", "Bulle, " + kind.points + (kind.points > 1 ? " points" : " point"));
+      bubble.style.width = kind.size + "px";
+      bubble.style.height = kind.size + "px";
+      bubble.style.setProperty("--fill", kind.fill);
+      bubble.style.setProperty("--edge", kind.edge);
+      const item = {
+        el: bubble,
+        x: x,
+        y: -kind.size - 8,
+        size: kind.size,
+        points: kind.points,
+        vy: 52 + Math.random() * 36 + (ROUND - left) * 1.4,
+        gone: false
+      };
+      bubble.style.transform = "translate3d(" + item.x + "px," + (-item.y - item.size) + "px,0)";
+      bubble.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        pop(item);
+      });
+      field.appendChild(bubble);
+      bubbles.push(item);
+    }
+
+    function pop(item) {
+      if (!running || item.gone) return;
+      item.gone = true;
+      score += item.points;
+      scoreEl.textContent = String(score);
+      const mark = document.createElement("span");
+      mark.className = "float-score";
+      mark.textContent = "+" + item.points;
+      mark.style.left = item.x + item.size / 2 + "px";
+      mark.style.bottom = item.y + item.size + "px";
+      field.appendChild(mark);
+      item.el.classList.add("pop");
+      window.setTimeout(() => {
+        item.el.remove();
+        mark.remove();
+      }, 170);
+    }
+
+    function miss(item) {
+      if (item.gone) return;
+      item.gone = true;
+      item.el.remove();
+      lives -= 1;
+      drawLives();
+      if (lives <= 0) finish("Plus de chances");
+    }
+
+    function finish(reason) {
+      if (!running) return;
+      running = false;
+      cancelAnimationFrame(raf);
+      bubbles.forEach((item) => item.el.remove());
+      bubbles = [];
+      field.querySelectorAll(".float-score").forEach((node) => node.remove());
+      const best = Math.max(bestScore(), score);
+      localStorage.setItem(BEST_KEY, String(best));
+      titleEl.textContent = reason;
+      messageEl.textContent = "Score de la partie : " + score + ". Meilleur score : " + best + ".";
+      actionBtn.textContent = "Rejouer";
+      bestLine.textContent = "";
+      overlay.hidden = false;
+      actionBtn.focus();
+    }
+
+    function frame(now) {
+      if (!running) return;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      left -= dt;
+      timeEl.textContent = String(Math.max(0, Math.ceil(left)));
+      if (left <= 0) {
+        timeEl.textContent = "0";
+        finish("Temps écoulé");
+        return;
+      }
+
+      spawnIn -= dt;
+      if (spawnIn <= 0 && bubbles.filter((item) => !item.gone).length < 4) {
+        spawn();
+        spawnIn = 0.85;
+      }
+
+      const height = field.clientHeight;
+      bubbles.forEach((item) => {
+        if (item.gone) return;
+        item.y += item.vy * dt;
+        item.el.style.transform = "translate3d(" + item.x + "px," + (-item.y - item.size) + "px,0)";
+        if (item.y > height) miss(item);
+      });
+      bubbles = bubbles.filter((item) => !item.gone);
+      raf = requestAnimationFrame(frame);
+    }
+
+    function start() {
+      field.querySelectorAll(".bubble, .float-score").forEach((node) => node.remove());
+      bubbles = [];
+      resetHud();
+      overlay.hidden = true;
+      running = true;
+      last = performance.now();
+      spawnIn = 0.15;
+      raf = requestAnimationFrame(frame);
+    }
+
+    actionBtn.addEventListener("click", start);
+    showBest();
+    drawLives();
+  </script>
+</body>
+</html>
