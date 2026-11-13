@@ -422,5 +422,11 @@ return [
                 < strpos($sql002, 'ALTER TABLE site_releases'),
             'Historical anomaly guard must run before permanent DDL.',
         );
+        $sql003 = (string) file_get_contents($migrationDirectory . '/003_split_cloudflare_admin_verification_state.sql');
+        foreach (['admin_state', 'verification_status', 'last_verification_attempt_at', 'last_verification_result_json', 'version'] as $column) {
+            TestHarness::assertContains($column, $sql003);
+        }
+        TestHarness::assertContains('cloudflare_status', $sql003);
+        TestHarness::assertNotContains('DROP TABLE', strtoupper($sql003));
     },
 ];

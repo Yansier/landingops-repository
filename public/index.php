@@ -12,7 +12,10 @@ use LandingOps\ControlPlane\Http\RequestId;
 use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Security\AeadSecretCipher;
+use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
+use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
+use LandingOps\ControlPlane\Service\CloudflareVerificationService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
@@ -112,12 +115,27 @@ try {
         $authorization,
         grants: $templateGrants,
     );
+    $secretCipher = AeadSecretCipher::fromEnvironment();
+    $cloudflareClient = new CloudflareReadOnlyClient();
     $cloudflareConnections = new CloudflareConnectionService(
         $repository,
-        AeadSecretCipher::fromEnvironment(),
+        $secretCipher,
         $authorization,
     );
     $domains = new DomainResourceService($repository, $authorization);
+    $cloudflareVerifications = new CloudflareVerificationService(
+        $repository,
+        $secretCipher,
+        $cloudflareClient,
+        $authorization,
+    );
+    $dnsPrechecks = new CloudflareDnsPrecheckService(
+        $repository,
+        $secretCipher,
+        $cloudflareClient,
+        $authorization,
+        CloudflareDnsPrecheckService::confirmedIpv4FromEnvironment(),
+    );
     $kernel = new ControlPlaneKernel(
         new SessionService($repository),
         new AccountService($repository, $authorization),
@@ -127,6 +145,8 @@ try {
         templateGrants: $templateGrants,
         cloudflareConnections: $cloudflareConnections,
         domains: $domains,
+        cloudflareVerifications: $cloudflareVerifications,
+        dnsPrechecks: $dnsPrechecks,
     );
 
     $response = $kernel->handle(new Request(

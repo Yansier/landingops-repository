@@ -78,7 +78,7 @@ interface ControlPlaneRepository
     /** @param array<string,mixed> $connection */
     public function insertCloudflareConnection(array $connection): void;
     /** @param array<string,mixed> $changes */
-    public function updateCloudflareConnection(string $id, array $changes): void;
+    public function updateCloudflareConnection(string $id, array $changes, int $expectedVersion): bool;
     /** @return list<array<string,mixed>> */
     public function listCloudflareZones(): array;
     /** @return array<string,mixed>|null */
@@ -89,7 +89,8 @@ interface ControlPlaneRepository
     public function findCloudflareZoneByExternal(string $connectionId, string $externalZoneId): ?array;
     /** @param array<string,mixed> $zone */
     public function insertCloudflareZone(array $zone): void;
-    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void;
+    /** @param array<string,mixed> $changes */
+    public function updateCloudflareZone(string $id, array $changes, int $expectedVersion): bool;
     /** @return list<array<string,mixed>> */
     public function listPrimaryDomains(?string $teamId, bool $usableOnly): array;
     /** @return array<string,mixed>|null */

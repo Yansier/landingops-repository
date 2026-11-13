@@ -10,6 +10,8 @@ use LandingOps\ControlPlane\Auth\SessionService;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
+use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
+use LandingOps\ControlPlane\Service\CloudflareVerificationService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
@@ -32,6 +34,8 @@ final class ControlPlaneKernel
         private readonly ?TemplateGrantService $templateGrants = null,
         private readonly ?CloudflareConnectionService $cloudflareConnections = null,
         private readonly ?DomainResourceService $domains = null,
+        private readonly ?CloudflareVerificationService $cloudflareVerifications = null,
+        private readonly ?CloudflareDnsPrecheckService $dnsPrechecks = null,
     ) {
     }
 
@@ -233,6 +237,19 @@ final class ControlPlaneKernel
             $this->csrf($request, $session);
             return $this->success($this->connectionManagement()->update($principal, $matches[1], $request->body, $requestId), $requestId);
         }
+        if ($method === 'POST'
+            && preg_match('~^/api/v1/cloudflare-connections/([0-9A-HJKMNP-TV-Z]{26})/verifications$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            return $this->success($this->verificationManagement()->verify(
+                $principal,
+                $matches[1],
+                $this->string($request->body, 'zone_id'),
+                $this->integer($request->body, 'expected_connection_version'),
+                $this->integer($request->body, 'expected_zone_version'),
+                $requestId,
+            ), $requestId);
+        }
         if ($method === 'GET' && $path === '/api/v1/cloudflare-zones') {
             return $this->list($this->domainManagement()->listZones($principal), $requestId);
         }
@@ -272,6 +289,16 @@ final class ControlPlaneKernel
             $this->csrf($request, $session);
             $this->domainManagement()->revoke($principal, $matches[1], $matches[2], $requestId);
             return $this->success(null, $requestId);
+        }
+        if ($method === 'POST'
+            && preg_match('~^/api/v1/primary-domains/([0-9A-HJKMNP-TV-Z]{26})/dns-prechecks$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            return $this->success($this->dnsPrecheckManagement()->check(
+                $principal,
+                $matches[1],
+                $this->string($request->body, 'hostname'),
+            ), $requestId);
         }
 
         foreach (['/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
@@ -372,6 +399,22 @@ final class ControlPlaneKernel
             throw new ApiException(501, 'not_implemented', '主域名管理服务尚未配置。');
         }
         return $this->domains;
+    }
+
+    private function verificationManagement(): CloudflareVerificationService
+    {
+        if ($this->cloudflareVerifications === null) {
+            throw new ApiException(501, 'not_implemented', 'Cloudflare 只读验证服务尚未配置。');
+        }
+        return $this->cloudflareVerifications;
+    }
+
+    private function dnsPrecheckManagement(): CloudflareDnsPrecheckService
+    {
+        if ($this->dnsPrechecks === null) {
+            throw new ApiException(501, 'not_implemented', 'DNS 只读预检查服务尚未配置。');
+        }
+        return $this->dnsPrechecks;
     }
 
     /** @param array<string,mixed> $file */

@@ -87,14 +87,20 @@ export interface TemplateUploadResult {
   validation_report: ValidationReport
 }
 
-export type VerificationStatus = 'active' | 'unverified' | 'disabled'
+export type VerificationStatus = 'valid' | 'unverified' | 'invalid'
+export type AdminState = 'enabled' | 'disabled'
 export interface CloudflareConnection {
   id: string
   label: string
   account_external_id: string | null
   token_hint: string
-  status: VerificationStatus
+  status: string
+  admin_state: AdminState
+  verification_status: VerificationStatus
   last_verified_at: string | null
+  last_verification_attempt_at: string | null
+  last_verification_result: Record<string, unknown> | null
+  version: number
   created_at: string
   updated_at: string
 }
@@ -104,9 +110,16 @@ export interface CloudflareZone {
   external_zone_id: string
   zone_name: string
   normalized_zone_name: string
-  status: VerificationStatus
+  status: string
+  admin_state: AdminState
+  verification_status: VerificationStatus
+  cloudflare_status: string | null
+  last_verification_result: Record<string, unknown> | null
+  version: number
   connection_label: string
-  connection_status: VerificationStatus
+  connection_status: string
+  connection_admin_state: AdminState
+  connection_verification_status: VerificationStatus
   last_synced_at: string | null
   created_at: string
   updated_at: string
@@ -126,14 +139,27 @@ export interface PrimaryDomain {
   domain_status: 'active' | 'disabled'
   zone_name: string
   normalized_zone_name: string
-  zone_status: VerificationStatus
+  zone_status: string
+  zone_admin_state: AdminState
+  zone_verification_status: VerificationStatus
+  zone_cloudflare_status: string | null
   connection_id: string
   connection_label: string
-  connection_status: VerificationStatus
+  connection_status: string
+  connection_admin_state: AdminState
+  connection_verification_status: VerificationStatus
   available: boolean
   grants: DomainGrant[]
   created_at: string
   updated_at: string
+}
+
+export interface DnsPrecheckResult {
+  hostname: string
+  classification: 'clear' | 'compatible' | 'needs_configuration' | 'conflict'
+  records: Array<{ id: string; type: string; name: string; content: string; proxied: boolean | null; ttl: number | null }>
+  confirmed_public_ipv4: string | null
+  message: string
 }
 
 export interface ApiEnvelope<T> { data: T; request_id: string }

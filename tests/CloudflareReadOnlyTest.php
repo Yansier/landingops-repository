@@ -1,0 +1,86 @@
+<?php
+
+declare(strict_types=1);
+
+namespace LandingOps\Tests;
+
+use LandingOps\ControlPlane\Cloudflare\CloudflareHttpResponse;
+use LandingOps\ControlPlane\Cloudflare\CloudflareHttpTransport;
+use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
+use LandingOps\ControlPlane\Cloudflare\CloudflareTransportException;
+use LandingOps\ControlPlane\Exception\ApiException;
+
+final class FakeCloudflareTransport implements CloudflareHttpTransport
+{
+    /** @var list<CloudflareHttpResponse|CloudflareTransportException> */
+    public array $queue;
+    /** @var list<string> */
+    public array $paths = [];
+
+    public function __construct(CloudflareHttpResponse|CloudflareTransportException ...$queue)
+    {
+        $this->queue = $queue;
+    }
+
+    public function get(string $path, string $token, float $timeoutSeconds): CloudflareHttpResponse
+    {
+        $this->paths[] = $path;
+        $next = array_shift($this->queue);
+        if ($next instanceof CloudflareTransportException) {
+            throw $next;
+        }
+        if (!$next instanceof CloudflareHttpResponse) {
+            throw new \RuntimeException('Fake response queue exhausted.');
+        }
+        return $next;
+    }
+}
+
+function cfResponse(int $status, array $payload = []): CloudflareHttpResponse
+{
+    return new CloudflareHttpResponse($status, json_encode($payload, JSON_THROW_ON_ERROR));
+}
+
+/** @return array<string,\Closure> */
+return [
+    'cloudflare read only client verifies token zone and exact dns path' => static function (): void {
+        $transport = new FakeCloudflareTransport(
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'Example.COM.', 'status' => 'active', 'account' => ['id' => 'acct_1']]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'dns_1', 'type' => 'A', 'name' => 'www.example.com', 'content' => '203.0.113.10', 'proxied' => true, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+        );
+        $client = new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {});
+        TestHarness::assertSame('active', $client->verifyToken('synthetic-token')['status']);
+        TestHarness::assertSame('example.com', $client->zone('synthetic-token', 'zone_1')['name']);
+        TestHarness::assertSame('A', $client->dnsRecords('synthetic-token', 'zone_1', 'www.example.com')[0]['type']);
+        TestHarness::assertSame('/user/tokens/verify', $transport->paths[0]);
+        TestHarness::assertSame('/zones/zone_1', $transport->paths[1]);
+        TestHarness::assertContains('/zones/zone_1/dns_records?name.exact=www.example.com', $transport->paths[2]);
+    },
+
+    'cloudflare read only errors map 401 403 429 timeout and inactive token' => static function (): void {
+        $cases = [
+            'cloudflare_token_invalid' => [cfResponse(401)],
+            'cloudflare_permission_denied' => [cfResponse(403)],
+            'cloudflare_rate_limited' => [cfResponse(429), cfResponse(429)],
+            'cloudflare_timeout' => [new CloudflareTransportException('timeout'), new CloudflareTransportException('timeout')],
+            'cloudflare_token_inactive' => [cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'disabled']])],
+        ];
+        foreach ($cases as $code => $responses) {
+            $client = new CloudflareReadOnlyClient(new FakeCloudflareTransport(...$responses), static function (int $microseconds): void {});
+            $error = TestHarness::assertThrows(static fn () => $client->verifyToken('synthetic-token'), ApiException::class);
+            TestHarness::assertSame($code, $error->errorCode);
+        }
+    },
+
+    'cloudflare identifiers reject url injection before transport' => static function (): void {
+        $transport = new FakeCloudflareTransport();
+        $client = new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {});
+        $error = TestHarness::assertThrows(
+            static fn () => $client->zone('synthetic-token', 'https://attacker.invalid'),
+            ApiException::class,
+        );
+        TestHarness::assertSame('cloudflare_identifier_invalid', $error->errorCode);
+        TestHarness::assertSame([], $transport->paths);
+    },
+];

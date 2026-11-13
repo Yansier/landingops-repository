@@ -366,7 +366,8 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     public function listCloudflareConnections(): array
     {
         return $this->all(
-            'SELECT id,label,account_external_id,token_hint,status,last_verified_at,created_at,updated_at '
+            'SELECT id,label,account_external_id,token_hint,status,admin_state,verification_status,last_verified_at,'
+            . 'last_verification_attempt_at,last_verification_result_json,version,created_at,updated_at '
             . 'FROM cloudflare_connections ORDER BY created_at DESC,id DESC',
         );
     }
@@ -385,18 +386,26 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     {
         $this->execute(
             'INSERT INTO cloudflare_connections(id,label,account_external_id,token_ciphertext,secret_key_version,'
-            . 'token_hint,status,last_verified_at,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            . 'token_hint,status,admin_state,verification_status,last_verified_at,last_verification_attempt_at,'
+            . 'last_verification_result_json,version,created_by_user_id,created_at,updated_at) '
+            . 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $connection['id'], $connection['label'], $connection['account_external_id'], $connection['token_ciphertext'],
                 $connection['secret_key_version'], $connection['token_hint'], $connection['status'],
-                $connection['last_verified_at'], $connection['created_by_user_id'], $connection['created_at'], $connection['updated_at'],
+                $connection['admin_state'], $connection['verification_status'], $connection['last_verified_at'],
+                $connection['last_verification_attempt_at'], $connection['last_verification_result_json'], $connection['version'],
+                $connection['created_by_user_id'], $connection['created_at'], $connection['updated_at'],
             ],
         );
     }
 
-    public function updateCloudflareConnection(string $id, array $changes): void
+    public function updateCloudflareConnection(string $id, array $changes, int $expectedVersion): bool
     {
-        $allowed = ['label', 'account_external_id', 'token_ciphertext', 'secret_key_version', 'token_hint', 'status', 'last_verified_at', 'updated_at'];
+        $allowed = [
+            'label', 'account_external_id', 'token_ciphertext', 'secret_key_version', 'token_hint', 'status',
+            'admin_state', 'verification_status', 'last_verified_at', 'last_verification_attempt_at',
+            'last_verification_result_json', 'updated_at',
+        ];
         $set = [];
         $values = [];
         foreach ($allowed as $column) {
@@ -406,17 +415,24 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
             }
         }
         if ($set === []) {
-            return;
+            return false;
         }
+        $set[] = 'version = version + 1';
         $values[] = $id;
-        $this->execute('UPDATE cloudflare_connections SET ' . implode(', ', $set) . ' WHERE id = ?', $values);
+        $values[] = $expectedVersion;
+        return $this->execute(
+            'UPDATE cloudflare_connections SET ' . implode(', ', $set) . ' WHERE id = ? AND version = ?',
+            $values,
+        )->rowCount() === 1;
     }
 
     public function listCloudflareZones(): array
     {
         return $this->all(
             'SELECT z.id,z.connection_id,z.external_zone_id,z.zone_name,z.normalized_zone_name,z.status,'
-            . 'z.last_synced_at,z.created_at,z.updated_at,c.label AS connection_label,c.status AS connection_status '
+            . 'z.admin_state,z.verification_status,z.cloudflare_status,z.last_synced_at,z.last_verification_result_json,z.version,'
+            . 'z.created_at,z.updated_at,c.label AS connection_label,c.status AS connection_status,'
+            . 'c.admin_state AS connection_admin_state,c.verification_status AS connection_verification_status '
             . 'FROM cloudflare_zones z JOIN cloudflare_connections c ON c.id=z.connection_id '
             . 'ORDER BY z.created_at DESC,z.id DESC',
         );
@@ -425,7 +441,9 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     public function findCloudflareZone(string $id): ?array
     {
         return $this->one(
-            'SELECT z.*,c.label AS connection_label,c.status AS connection_status FROM cloudflare_zones z '
+            'SELECT z.*,c.label AS connection_label,c.status AS connection_status,'
+            . 'c.admin_state AS connection_admin_state,c.verification_status AS connection_verification_status '
+            . 'FROM cloudflare_zones z '
             . 'JOIN cloudflare_connections c ON c.id=z.connection_id WHERE z.id=?',
             [$id],
         );
@@ -448,24 +466,52 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     {
         $this->execute(
             'INSERT INTO cloudflare_zones(id,connection_id,external_zone_id,zone_name,normalized_zone_name,status,'
-            . 'last_synced_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+            . 'admin_state,verification_status,cloudflare_status,last_synced_at,last_verification_result_json,version,created_at,updated_at) '
+            . 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             [
                 $zone['id'], $zone['connection_id'], $zone['external_zone_id'], $zone['zone_name'],
-                $zone['normalized_zone_name'], $zone['status'], $zone['last_synced_at'], $zone['created_at'], $zone['updated_at'],
+                $zone['normalized_zone_name'], $zone['status'], $zone['admin_state'], $zone['verification_status'], $zone['cloudflare_status'],
+                $zone['last_synced_at'], $zone['last_verification_result_json'], $zone['version'],
+                $zone['created_at'], $zone['updated_at'],
             ],
         );
     }
 
-    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void
+    public function updateCloudflareZone(string $id, array $changes, int $expectedVersion): bool
     {
-        $this->execute('UPDATE cloudflare_zones SET status=?,updated_at=? WHERE id=?', [$status, $at, $id]);
+        $allowed = [
+            'status', 'admin_state', 'verification_status', 'cloudflare_status', 'last_synced_at',
+            'last_verification_result_json', 'updated_at',
+        ];
+        $set = [];
+        $values = [];
+        foreach ($allowed as $column) {
+            if (array_key_exists($column, $changes)) {
+                $set[] = $column . ' = ?';
+                $values[] = $changes[$column];
+            }
+        }
+        if ($set === []) {
+            return false;
+        }
+        $set[] = 'version = version + 1';
+        $values[] = $id;
+        $values[] = $expectedVersion;
+        return $this->execute(
+            'UPDATE cloudflare_zones SET ' . implode(', ', $set) . ' WHERE id=? AND version=?',
+            $values,
+        )->rowCount() === 1;
     }
 
     public function listPrimaryDomains(?string $teamId, bool $usableOnly): array
     {
         $sql = 'SELECT d.id,d.zone_id,d.domain_name,d.normalized_domain_name,d.status AS domain_status,d.created_at,d.updated_at,'
-            . 'z.zone_name,z.normalized_zone_name,z.status AS zone_status,z.connection_id,'
-            . 'c.label AS connection_label,c.status AS connection_status '
+            . 'z.zone_name,z.normalized_zone_name,z.status AS zone_status,z.admin_state AS zone_admin_state,'
+            . 'z.verification_status AS zone_verification_status,z.last_verification_result_json AS zone_verification_result_json,'
+            . 'z.cloudflare_status AS zone_cloudflare_status,'
+            . 'z.connection_id,'
+            . 'c.label AS connection_label,c.status AS connection_status,c.admin_state AS connection_admin_state,'
+            . 'c.verification_status AS connection_verification_status '
             . 'FROM primary_domains d JOIN cloudflare_zones z ON z.id=d.zone_id '
             . 'JOIN cloudflare_connections c ON c.id=z.connection_id';
         $where = [];
@@ -475,7 +521,8 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
             $parameters[] = $teamId;
         }
         if ($usableOnly) {
-            $where[] = "d.status='active' AND z.status='active' AND c.status='active'";
+            $where[] = "d.status='active' AND z.admin_state='enabled' AND z.verification_status='valid' AND z.cloudflare_status='active' "
+                . "AND c.admin_state='enabled' AND c.verification_status='valid'";
         }
         if ($where !== []) {
             $sql .= ' WHERE ' . implode(' AND ', $where);
@@ -486,7 +533,11 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     public function findPrimaryDomain(string $id): ?array
     {
         return $this->one(
-            'SELECT d.*,z.status AS zone_status,z.normalized_zone_name,z.connection_id,c.status AS connection_status '
+            'SELECT d.*,z.status AS zone_status,z.admin_state AS zone_admin_state,'
+            . 'z.verification_status AS zone_verification_status,z.cloudflare_status AS zone_cloudflare_status,'
+            . 'z.normalized_zone_name,z.connection_id,'
+            . 'c.status AS connection_status,c.admin_state AS connection_admin_state,'
+            . 'c.verification_status AS connection_verification_status '
             . 'FROM primary_domains d JOIN cloudflare_zones z ON z.id=d.zone_id '
             . 'JOIN cloudflare_connections c ON c.id=z.connection_id WHERE d.id=?',
             [$id],

@@ -80,8 +80,8 @@ td small{display:block;color:#929daf;margin-top:3px}
 .team-glyph{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;background:#edecff;color:#5c54dc;font-weight:700}
 .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;background:#f0f2f5;border-radius:99px;color:#667085;font-size:10px;font-weight:600}
 .badge>span{width:6px;height:6px;border-radius:50%;background:#98a2b3}
-.badge-active{background:#e8f7f1;color:#167b59}
-.badge-active>span{background:#24a777}
+.badge-active,.badge-enabled{background:#e8f7f1;color:#167b59}
+.badge-active>span,.badge-enabled>span{background:#24a777}
 .badge-disabled,.badge-failed{background:#fff0f0;color:#b43d3d}
 .badge-disabled>span,.badge-failed>span{background:#d95c5c}
 .badge-deploying{background:#fff4e8;color:#af661f}

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureApi } from './api'
-import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, revokePrimaryDomainGrant, revokeTemplateGrant, transferOwner, updateCloudflareConnection, uploadTemplate } from './resources'
+import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, precheckDomainDns, revokePrimaryDomainGrant, revokeTemplateGrant, transferOwner, updateCloudflareConnection, uploadTemplate, verifyCloudflareConnection } from './resources'
 
 const ok=(data:unknown)=>new Response(JSON.stringify({data,request_id:'req'}),{status:200,headers:{'Content-Type':'application/json'}})
 describe('业务请求契约',()=>{
@@ -38,15 +38,24 @@ describe('业务请求契约',()=>{
   it('Cloudflare 与主域名接口不回传客户端推断状态',async()=>{
     fetchMock.mockImplementation(()=>Promise.resolve(ok({id:'resource'})))
     await createCloudflareConnection({label:'Account',account_external_id:'acct',api_token:'secret-token'})
-    await updateCloudflareConnection('01ARZ3NDEKTSV4RRFFQ69G5FAV',{api_token:'rotated-token'})
+    await updateCloudflareConnection('01ARZ3NDEKTSV4RRFFQ69G5FAV',{api_token:'rotated-token',expected_version:3})
     await createPrimaryDomain({zone_id:'01ARZ3NDEKTSV4RRFFQ69G5FAA',domain_name:'pages.example.com'})
     await grantPrimaryDomain('01ARZ3NDEKTSV4RRFFQ69G5FAV','01ARZ3NDEKTSV4RRFFQ69G5FAA')
     await revokePrimaryDomainGrant('01ARZ3NDEKTSV4RRFFQ69G5FAV','01ARZ3NDEKTSV4RRFFQ69G5FAA')
     expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/cloudflare-connections')
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('status')
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({api_token:'rotated-token'})
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({api_token:'rotated-token',expected_version:3})
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({zone_id:'01ARZ3NDEKTSV4RRFFQ69G5FAA',domain_name:'pages.example.com'})
     expect(fetchMock.mock.calls[3][0]).toContain('/primary-domains/')
     expect(fetchMock.mock.calls[4][1].method).toBe('DELETE')
+  })
+  it('只读验证与 DNS 预检查使用固定资源路由和版本',async()=>{
+    fetchMock.mockImplementation(()=>Promise.resolve(ok({status:'success'})))
+    await verifyCloudflareConnection('connection',{zone_id:'zone',expected_connection_version:4,expected_zone_version:2})
+    await precheckDomainDns('domain','www.pages.example.com')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/cloudflare-connections/connection/verifications')
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({zone_id:'zone',expected_connection_version:4,expected_zone_version:2})
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/primary-domains/domain/dns-prechecks')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({hostname:'www.pages.example.com'})
   })
 })

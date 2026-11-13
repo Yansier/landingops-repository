@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-本文固定 V1 的资源、授权、并发和错误语义，也标明当前 PHP 控制面子集。它不是第三方宝塔/Cloudflare 端点声明；Phase 1F 只登记 Cloudflare 元数据和密文，不执行任何第三方调用。
+本文固定 V1 的资源、授权、并发和错误语义，也标明当前 PHP 控制面子集。Phase 1G 只通过固定 Cloudflare 官方 API origin 执行 Token、Zone 和 DNS Read，不执行任何第三方写操作。
 
 建议前缀 `/api/v1`，JSON 使用 UTF-8、`snake_case`；时间为 UTC RFC 3339；资源 ID 为不可枚举 UUID/ULID。生产只允许 HTTPS。
 
@@ -87,17 +87,21 @@
 | `GET/PUT /settings/baota` | 总管理员 | 读取脱敏状态/创建或轮换唯一配置；不得创建第二条 |
 | `GET /cloudflare-connections` | 总管理员 | 返回 label、token_hint、状态，不返回密文 |
 | `POST /cloudflare-connections` | 总管理员 | 使用环境主密钥认证加密 Token；新连接固定为 `unverified` |
-| `PATCH /cloudflare-connections/{id}` | 总管理员 | 修改元数据、轮换 Token 或停用；轮换后重置为 `unverified` |
+| `PATCH /cloudflare-connections/{id}` | 总管理员 | 修改元数据、轮换 Token 或显式启停；轮换仅重置验证状态 |
 | `GET /cloudflare-zones` | 总管理员 | 列出 Zone 与其唯一连接；不返回 Token |
-| `POST /cloudflare-zones` | 总管理员 | 人工登记明确 Zone；固定为 `unverified`，不调用 Cloudflare |
-| `PATCH /cloudflare-zones/{id}` | 总管理员 | 本阶段仅允许 `unverified/disabled`，不能伪造验证成功 |
+| `POST /cloudflare-zones` | 总管理员 | 人工登记明确 Zone；初始验证状态为 `unverified` |
+| `POST /cloudflare-connections/{id}/verifications` | 总管理员 | 只读验证 Token、指定 Zone 与 DNS Read；提交连接/Zone 乐观锁版本 |
+| `PATCH /cloudflare-zones/{id}` | 总管理员 | 仅显式启停；不能由客户端写入验证成功 |
 | `GET /primary-domains` | 所有角色 | 自动限制到有权使用的主域名 |
 | `POST /primary-domains` | 总管理员 | 在明确 Zone 下登记规范化主域名，不创建 DNS |
 | `PATCH /primary-domains/{id}` | 总管理员 | 启用/停用登记资源，不修改 DNS |
 | `POST /primary-domains/{id}/grants` | 总管理员 | 授权团队 |
 | `DELETE /primary-domains/{id}/grants/{team_id}` | 总管理员 | 撤销未来创建权限，不改 DNS/实例 |
+| `POST /primary-domains/{id}/dns-prechecks` | 总管理员 | 精确查询候选域名记录并分类；绝不写 DNS |
 
-`api_token` 只在创建/轮换请求体中出现；响应、普通日志和审计不得包含明文或密文。未配置环境密钥时 Token 写入返回 `503 secret_key_unavailable`，而不是明文降级。总管理员看到全部资源；团队管理员看到本团队有效授权（包括明确标记的不可用状态）；员工只看到授权且连接、Zone、主域名均为 `active` 的可用资源。任意未来连接“测试”操作仍须有 SSRF 防护、超时、限流和脱敏日志。员工不能提交 connection ID 来改变 Zone 路由。
+连接和 Zone 的 `admin_state` 与 `verification_status` 独立；Token 轮换不得改变管理员启停状态。PATCH 必须提交 `expected_version`，陈旧写入返回 409。只读验证只在 Token active、Zone ID/名称/账号匹配且 DNS Read 成功后更新可信状态。预检查结果为 `clear|compatible|needs_configuration|conflict`。
+
+`api_token` 只在创建/轮换请求体中出现；响应、普通日志和审计不得包含明文或密文。未配置环境密钥时 Token 写入返回 `503 secret_key_unavailable`，而不是明文降级。总管理员看到全部资源；团队管理员看到本团队有效授权（包括明确标记的不可用状态）；员工只看到授权、管理员启用且连接/Zone 验证有效的资源。只读适配器固定官方 origin、禁止重定向和任意路径，并设置超时、有限重试、响应上限与脱敏错误。员工不能提交 connection ID 来改变 Zone 路由。
 
 V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、TTL Auto，不自动创建 AAAA/CNAME/通配符；这些值只能由总管理员在真实环境确认后按主域名显式调整。
 

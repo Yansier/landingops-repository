@@ -34,7 +34,7 @@ final class DomainResourceService
     public function listZones(Principal $actor): array
     {
         $this->authorization->assertSuperAdmin($actor);
-        return $this->repository->listCloudflareZones();
+        return array_map(self::safeZone(...), $this->repository->listCloudflareZones());
     }
 
     /** @return array<string,mixed> */
@@ -43,7 +43,7 @@ final class DomainResourceService
         $this->authorization->assertSuperAdmin($actor);
         $connectionId = self::requiredId($input, 'connection_id');
         $connection = $this->repository->findCloudflareConnection($connectionId);
-        if ($connection === null || ($connection['status'] ?? null) === 'disabled') {
+        if ($connection === null || ($connection['admin_state'] ?? null) === 'disabled') {
             throw new ApiException(404, 'cloudflare_connection_not_available', 'Cloudflare 连接不存在或已停用。');
         }
         $externalId = self::externalId($input['external_zone_id'] ?? null);
@@ -57,7 +57,10 @@ final class DomainResourceService
         $row = [
             'id' => $this->ids->generate(), 'connection_id' => $connectionId, 'external_zone_id' => $externalId,
             'zone_name' => $name, 'normalized_zone_name' => $name, 'status' => 'unverified',
-            'last_synced_at' => null, 'created_at' => $now, 'updated_at' => $now,
+            'admin_state' => 'enabled', 'verification_status' => 'unverified',
+            'cloudflare_status' => null,
+            'last_synced_at' => null, 'last_verification_result_json' => null, 'version' => 1,
+            'created_at' => $now, 'updated_at' => $now,
         ];
         try {
             $this->repository->transaction(function () use ($row, $actor, $requestId): void {
@@ -74,25 +77,39 @@ final class DomainResourceService
             }
             throw $exception;
         }
-        return $this->repository->findCloudflareZone((string) $row['id']) ?? $row;
+        return self::safeZone($this->repository->findCloudflareZone((string) $row['id']) ?? $row);
     }
 
     /** @return array<string,mixed> */
     public function updateZone(Principal $actor, string $id, array $input, string $requestId): array
     {
         $this->authorization->assertSuperAdmin($actor);
-        if ($this->repository->findCloudflareZone($id) === null) {
+        $zone = $this->repository->findCloudflareZone($id);
+        if ($zone === null) {
             throw new ApiException(404, 'cloudflare_zone_not_found', 'Cloudflare Zone 不存在。');
         }
-        $status = $input['status'] ?? null;
-        if (!in_array($status, ['unverified', 'disabled'], true)) {
-            throw new ApiException(422, 'cloudflare_zone_status_invalid', '未接入真实验证前，Zone 只能标记为 unverified 或 disabled。');
+        $adminState = $input['admin_state'] ?? null;
+        $expectedVersion = $input['expected_version'] ?? null;
+        if (!in_array($adminState, ['enabled', 'disabled'], true)) {
+            throw new ApiException(422, 'cloudflare_zone_admin_state_invalid', 'Zone 管理员状态必须是 enabled 或 disabled。');
         }
-        $this->repository->transaction(function () use ($id, $status, $actor, $requestId): void {
-            $this->repository->updateCloudflareZoneStatus($id, (string) $status, $this->clock->sql());
-            $this->audit->record($actor, 'cloudflare.zone_status', 'cloudflare_zone', $id, $requestId, ['status' => $status]);
+        if (!is_int($expectedVersion) || $expectedVersion < 1) {
+            throw new ApiException(422, 'expected_version_invalid', '必须提交有效的 expected_version。');
+        }
+        $status = self::legacyStatus((string) $adminState, (string) $zone['verification_status']);
+        $this->repository->transaction(function () use ($id, $adminState, $status, $expectedVersion, $zone, $actor, $requestId): void {
+            if (!$this->repository->updateCloudflareZone($id, [
+                'admin_state' => $adminState, 'status' => $status, 'updated_at' => $this->clock->sql(),
+            ], $expectedVersion)) {
+                throw new ApiException(409, 'cloudflare_zone_version_conflict', 'Zone 已被其他管理员更新，请刷新后重试。');
+            }
+            $action = $adminState === 'disabled' && ($zone['admin_state'] ?? null) !== 'disabled'
+                ? 'cloudflare.zone_disable'
+                : ($adminState === 'enabled' && ($zone['admin_state'] ?? null) !== 'enabled'
+                    ? 'cloudflare.zone_enable' : 'cloudflare.zone_update');
+            $this->audit->record($actor, $action, 'cloudflare_zone', $id, $requestId, ['admin_state' => $adminState]);
         });
-        return $this->repository->findCloudflareZone($id) ?? [];
+        return self::safeZone($this->repository->findCloudflareZone($id) ?? []);
     }
 
     /** @return list<array<string,mixed>> */
@@ -106,9 +123,9 @@ final class DomainResourceService
         $usableOnly = $actor->role === Role::STAFF;
         $rows = $this->repository->listPrimaryDomains($teamId, $usableOnly);
         foreach ($rows as &$row) {
-            $row['available'] = ($row['domain_status'] ?? null) === 'active'
-                && ($row['zone_status'] ?? null) === 'active'
-                && ($row['connection_status'] ?? null) === 'active';
+            $row['available'] = self::available($row);
+            $row['zone_verification_result'] = self::decodeResult($row['zone_verification_result_json'] ?? null);
+            unset($row['zone_verification_result_json']);
             $row['grants'] = $actor->role === Role::SUPER_ADMIN
                 ? $this->repository->listDomainGrants((string) $row['id']) : [];
         }
@@ -122,7 +139,8 @@ final class DomainResourceService
         $this->authorization->assertSuperAdmin($actor);
         $zoneId = self::requiredId($input, 'zone_id');
         $zone = $this->repository->findCloudflareZone($zoneId);
-        if ($zone === null || ($zone['status'] ?? null) === 'disabled' || ($zone['connection_status'] ?? null) === 'disabled') {
+        if ($zone === null || ($zone['admin_state'] ?? null) === 'disabled'
+            || ($zone['connection_admin_state'] ?? null) === 'disabled') {
             throw new ApiException(404, 'cloudflare_zone_not_available', 'Zone 不存在，或 Zone/连接已停用。');
         }
         $name = DomainName::normalize(self::requiredString($input, 'domain_name'));
@@ -167,7 +185,8 @@ final class DomainResourceService
         if (!in_array($status, ['active', 'disabled'], true)) {
             throw new ApiException(422, 'primary_domain_status_invalid', '主域名状态无效。');
         }
-        if ($status === 'active' && (($domain['zone_status'] ?? null) === 'disabled' || ($domain['connection_status'] ?? null) === 'disabled')) {
+        if ($status === 'active' && (($domain['zone_admin_state'] ?? null) === 'disabled'
+            || ($domain['connection_admin_state'] ?? null) === 'disabled')) {
             throw new ApiException(409, 'primary_domain_upstream_disabled', 'Zone 或连接停用时不能重新启用主域名。');
         }
         $this->repository->transaction(function () use ($id, $status, $actor, $requestId): void {
@@ -182,7 +201,8 @@ final class DomainResourceService
         $this->authorization->assertSuperAdmin($actor);
         $domain = $this->repository->findPrimaryDomain($domainId);
         if ($domain === null || ($domain['status'] ?? null) !== 'active'
-            || ($domain['zone_status'] ?? null) === 'disabled' || ($domain['connection_status'] ?? null) === 'disabled'
+            || ($domain['zone_admin_state'] ?? null) === 'disabled'
+            || ($domain['connection_admin_state'] ?? null) === 'disabled'
         ) {
             throw new ApiException(404, 'primary_domain_not_available', '主域名不存在或其上游资源已停用。');
         }
@@ -220,8 +240,9 @@ final class DomainResourceService
     {
         foreach ($this->repository->listPrimaryDomains(null, false) as $row) {
             if (($row['id'] ?? null) === $id) {
-                $row['available'] = ($row['domain_status'] ?? null) === 'active'
-                    && ($row['zone_status'] ?? null) === 'active' && ($row['connection_status'] ?? null) === 'active';
+                $row['available'] = self::available($row);
+                $row['zone_verification_result'] = self::decodeResult($row['zone_verification_result_json'] ?? null);
+                unset($row['zone_verification_result_json']);
                 $row['grants'] = $this->repository->listDomainGrants($id);
                 return $row;
             }
@@ -255,5 +276,42 @@ final class DomainResourceService
             throw new ApiException(422, 'cloudflare_zone_id_invalid', 'Cloudflare Zone 外部标识格式无效。');
         }
         return $value;
+    }
+
+    /** @param array<string,mixed> $row */
+    private static function available(array $row): bool
+    {
+        return ($row['domain_status'] ?? null) === 'active'
+            && ($row['zone_admin_state'] ?? null) === 'enabled'
+            && ($row['zone_verification_status'] ?? null) === 'valid'
+            && ($row['zone_cloudflare_status'] ?? $row['cloudflare_status'] ?? null) === 'active'
+            && ($row['connection_admin_state'] ?? null) === 'enabled'
+            && ($row['connection_verification_status'] ?? null) === 'valid';
+    }
+
+    private static function legacyStatus(string $adminState, string $verificationStatus): string
+    {
+        if ($adminState === 'disabled') {
+            return 'disabled';
+        }
+        return $verificationStatus === 'valid' ? 'active' : 'unverified';
+    }
+
+    /** @param array<string,mixed> $row @return array<string,mixed> */
+    private static function safeZone(array $row): array
+    {
+        $row['last_verification_result'] = self::decodeResult($row['last_verification_result_json'] ?? null);
+        unset($row['last_verification_result_json']);
+        return $row;
+    }
+
+    /** @return array<string,mixed>|null */
+    private static function decodeResult(mixed $value): ?array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        $decoded = is_string($value) && $value !== '' ? json_decode($value, true) : null;
+        return is_array($decoded) ? $decoded : null;
     }
 }

@@ -206,6 +206,8 @@ try {
     $structureBeforeRepeat = [
         showCreateTable($pdo, 'site_releases'),
         showCreateTable($pdo, 'domain_reservations'),
+        showCreateTable($pdo, 'cloudflare_connections'),
+        showCreateTable($pdo, 'cloudflare_zones'),
     ];
     $dataBeforeRepeat = [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
@@ -215,6 +217,8 @@ try {
     integrationAssert($structureBeforeRepeat === [
         showCreateTable($pdo, 'site_releases'),
         showCreateTable($pdo, 'domain_reservations'),
+        showCreateTable($pdo, 'cloudflare_connections'),
+        showCreateTable($pdo, 'cloudflare_zones'),
     ], '重复执行迁移改变了活动键表结构。');
     integrationAssert($dataBeforeRepeat === [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
@@ -226,6 +230,13 @@ try {
         . "'chk_domain_reservations_active_key_not_null') AND constraint_type = 'CHECK'",
     )->fetchColumn();
     integrationAssert($newCheckCount === 2, '002 的两个严格 CHECK 未完整创建。');
+    $cloudflareCheckCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
+        . "AND constraint_name IN ('chk_cloudflare_connections_admin_state','chk_cloudflare_connections_verification',"
+        . "'chk_cloudflare_connections_version','chk_cloudflare_zones_admin_state','chk_cloudflare_zones_verification',"
+        . "'chk_cloudflare_zones_version') AND constraint_type = 'CHECK'",
+    )->fetchColumn();
+    integrationAssert($cloudflareCheckCount === 6, '003 的管理员、验证和版本 CHECK 未完整创建。');
 
     $businessTables = [
         'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
@@ -530,6 +541,20 @@ try {
             !str_contains(json_encode($connectionService->list($super), JSON_THROW_ON_ERROR), $secretToken),
             'Cloudflare Token 泄露到连接列表。',
         );
+        $disabledConnection = $connectionService->update($super, (string) $managedConnection['id'], [
+            'admin_state' => 'disabled', 'expected_version' => 1,
+        ], 'mysql-cf-disable');
+        integrationAssert($disabledConnection['admin_state'] === 'disabled', 'Cloudflare 连接停用失败。');
+        $rotatedConnection = $connectionService->update($super, (string) $managedConnection['id'], [
+            'api_token' => $secretToken . '-rotated', 'expected_version' => 2,
+        ], 'mysql-cf-rotate-disabled');
+        integrationAssert(
+            $rotatedConnection['admin_state'] === 'disabled' && $rotatedConnection['verification_status'] === 'unverified',
+            '停用连接在 Token 轮换后被错误启用。',
+        );
+        $managedConnection = $connectionService->update($super, (string) $managedConnection['id'], [
+            'admin_state' => 'enabled', 'expected_version' => 3,
+        ], 'mysql-cf-enable');
         $managedZone = $domainService->createZone($super, [
             'connection_id' => $managedConnection['id'],
             'external_zone_id' => 'external_' . strtolower($ids->generate()),

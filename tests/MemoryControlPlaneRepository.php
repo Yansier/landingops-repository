@@ -442,7 +442,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         $this->cloudflareConnections[(string) $connection['id']] = $connection;
     }
 
-    public function updateCloudflareConnection(string $id, array $changes): void
+    public function updateCloudflareConnection(string $id, array $changes, int $expectedVersion): bool
     {
         if (isset($changes['label'])) {
             $other = $this->findCloudflareConnectionByLabel((string) $changes['label']);
@@ -450,7 +450,13 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 throw new RuntimeException('duplicate cloudflare connection');
             }
         }
+        if (!isset($this->cloudflareConnections[$id])
+            || (int) ($this->cloudflareConnections[$id]['version'] ?? 1) !== $expectedVersion) {
+            return false;
+        }
+        $changes['version'] = $expectedVersion + 1;
         $this->cloudflareConnections[$id] = array_replace($this->cloudflareConnections[$id] ?? [], $changes);
+        return true;
     }
 
     public function listCloudflareZones(): array
@@ -458,7 +464,12 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         $rows = [];
         foreach ($this->cloudflareZones as $zone) {
             $connection = $this->cloudflareConnections[(string) $zone['connection_id']] ?? [];
-            $rows[] = $zone + ['connection_label' => $connection['label'] ?? null, 'connection_status' => $connection['status'] ?? null];
+            $rows[] = $zone + [
+                'connection_label' => $connection['label'] ?? null,
+                'connection_status' => $connection['status'] ?? null,
+                'connection_admin_state' => $connection['admin_state'] ?? null,
+                'connection_verification_status' => $connection['verification_status'] ?? null,
+            ];
         }
         return $rows;
     }
@@ -470,7 +481,12 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             return null;
         }
         $connection = $this->cloudflareConnections[(string) $zone['connection_id']] ?? [];
-        return $zone + ['connection_label' => $connection['label'] ?? null, 'connection_status' => $connection['status'] ?? null];
+        return $zone + [
+            'connection_label' => $connection['label'] ?? null,
+            'connection_status' => $connection['status'] ?? null,
+            'connection_admin_state' => $connection['admin_state'] ?? null,
+            'connection_verification_status' => $connection['verification_status'] ?? null,
+        ];
     }
 
     public function findCloudflareZoneByName(string $normalizedName): ?array
@@ -507,10 +523,15 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         $this->cloudflareZones[(string) $zone['id']] = $zone;
     }
 
-    public function updateCloudflareZoneStatus(string $id, string $status, string $at): void
+    public function updateCloudflareZone(string $id, array $changes, int $expectedVersion): bool
     {
-        $this->cloudflareZones[$id]['status'] = $status;
-        $this->cloudflareZones[$id]['updated_at'] = $at;
+        if (!isset($this->cloudflareZones[$id])
+            || (int) ($this->cloudflareZones[$id]['version'] ?? 1) !== $expectedVersion) {
+            return false;
+        }
+        $changes['version'] = $expectedVersion + 1;
+        $this->cloudflareZones[$id] = array_replace($this->cloudflareZones[$id], $changes);
+        return true;
     }
 
     public function listPrimaryDomains(?string $teamId, bool $usableOnly): array
@@ -525,7 +546,10 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 continue;
             }
             if ($usableOnly && (($domain['status'] ?? null) !== 'active'
-                || ($zone['status'] ?? null) !== 'active' || ($zone['connection_status'] ?? null) !== 'active')) {
+                || ($zone['admin_state'] ?? null) !== 'enabled'
+                || ($zone['verification_status'] ?? null) !== 'valid'
+                || ($zone['connection_admin_state'] ?? null) !== 'enabled'
+                || ($zone['connection_verification_status'] ?? null) !== 'valid')) {
                 continue;
             }
             $rows[] = [
@@ -535,6 +559,11 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 'zone_name' => $zone['zone_name'], 'normalized_zone_name' => $zone['normalized_zone_name'],
                 'zone_status' => $zone['status'], 'connection_id' => $zone['connection_id'],
                 'connection_label' => $zone['connection_label'], 'connection_status' => $zone['connection_status'],
+                'zone_admin_state' => $zone['admin_state'], 'zone_verification_status' => $zone['verification_status'],
+                'zone_cloudflare_status' => $zone['cloudflare_status'] ?? null,
+                'zone_verification_result_json' => $zone['last_verification_result_json'] ?? null,
+                'connection_admin_state' => $zone['connection_admin_state'],
+                'connection_verification_status' => $zone['connection_verification_status'],
             ];
         }
         return $rows;
@@ -550,6 +579,10 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         return $zone === null ? null : $domain + [
             'zone_status' => $zone['status'], 'normalized_zone_name' => $zone['normalized_zone_name'],
             'connection_id' => $zone['connection_id'], 'connection_status' => $zone['connection_status'],
+            'zone_admin_state' => $zone['admin_state'], 'zone_verification_status' => $zone['verification_status'],
+            'zone_cloudflare_status' => $zone['cloudflare_status'] ?? null,
+            'connection_admin_state' => $zone['connection_admin_state'],
+            'connection_verification_status' => $zone['connection_verification_status'],
         ];
     }
 

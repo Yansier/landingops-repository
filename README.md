@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1F（Cloudflare 连接、主域名与团队授权）**。已提供 Cloudflare Token 认证加密登记、多连接/Zone/主域名资源、团队授权与 Vue 管理页面；所有新连接和 Zone 明确保持 `unverified`，不调用 Cloudflare、不修改 DNS。仍不包含实例创建、DNS/SSL 自动化、生产发布 Worker 或真实宝塔调用。
+> 当前状态：**Phase 1G（Cloudflare 只读验证与 DNS 预检查）**。已提供固定官方 API origin 的 Token/Zone/DNS Read 验证、管理员状态与验证状态分离、DNS 冲突只读分类及 Vue 页面；不会创建或修改 DNS。仍不包含实例创建、DNS/SSL 自动化、生产发布 Worker 或真实宝塔调用。
 
 ## 最重要的边界
 
@@ -30,6 +30,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1D 前端说明](docs/PHASE_1D.md) | Vue 3 管理后台、CSRF 恢复、本地启动与测试说明 |
 | [Phase 1E 模板管理](docs/PHASE_1E.md) | ZIP 上传、私有存储、团队授权、页面与安全测试说明 |
 | [Phase 1F 域名资源](docs/PHASE_1F.md) | Cloudflare 连接密文、Zone/主域名、团队授权与页面说明 |
+| [Phase 1G 只读验证](docs/PHASE_1G.md) | Cloudflare Token/Zone/DNS Read 验证、DNS 预检查和安全边界 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -56,7 +57,7 @@ examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)。
 
 ## 安全提示
 
