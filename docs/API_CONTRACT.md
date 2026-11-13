@@ -70,7 +70,7 @@
 | 方法与路径 | 权限 | 语义 |
 | --- | --- | --- |
 | `GET /templates` | 所有角色 | 只返回有权查看的元数据与能力；无视觉预览字段 |
-| `POST /templates/uploads` | 总/团队管理员 | multipart 上传 ZIP，先进入私有暂存并异步/同步验证 |
+| `POST /templates/uploads` | 总/团队管理员 | multipart 上传 ZIP，先进入私有不可执行 intake，再异步验证；默认压缩包 30 MiB、解压 100 MiB、2,000 文件、单文件 30 MiB |
 | `GET /template-versions/{id}/validation` | 有权查看者 | 返回脱敏验证报告 |
 | `POST /template-versions/{id}/grants` | 总管理员 | 授权一个团队 |
 | `DELETE /template-versions/{id}/grants/{team_id}` | 总管理员 | 撤销未来使用权，不操作实例 |
@@ -91,6 +91,8 @@
 | `DELETE /primary-domains/{id}/grants/{team_id}` | 总管理员 | 撤销未来创建权限，不改 DNS/实例 |
 
 任意连接“测试”操作必须有 SSRF 防护、超时、限流和脱敏日志。员工不能提交 connection ID 来改变 Zone 路由。
+
+V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、TTL Auto，不自动创建 AAAA/CNAME/通配符；这些值只能由总管理员在真实环境确认后按主域名显式调整。
 
 ## 6. 实例与部署
 
@@ -121,6 +123,8 @@
 
 服务端从主域名计算并规范化 FQDN，不能接受客户端提交最终路径、宝塔地址或 Cloudflare 连接。成功返回 202，包括 `instance_id`、`job_id`、`status=queued`；冲突/校验失败前不产生残留预留。
 
+原生后台默认关闭。若显式启用，请求必须额外包含用户设置的 `native_admin.password`（V1 默认至少 12 字符，允许长口令）；该字段只在 TLS 请求内短暂处理，必须从访问日志、任务 payload、幂等请求缓存和审计中删去，站点只保存现代密码哈希。服务端不生成或回显可恢复的明文密码。
+
 ### 6.2 批量
 
 - `POST /deployment-batches/validate`：纯验证，逐行给出规范化结果和错误，不持有域名。
@@ -146,10 +150,11 @@
 
 ### 7.1 配置
 
-- `GET /instances/{id}/config`：返回 schema 允许的安全配置、`revision`、`content_hash`、`source`。
-- `PUT /instances/{id}/config`：请求包含 `expected_revision`、完整 `config`、可选 `reason`；成功可返回 202（异步发布任务）或在已定义的短本地写路径中返回 200，Phase 1B 应统一选择一种。建议 202 以保留任务审计。
+- `GET /instances/{id}/config`：返回 schema 允许的安全配置、`revision`、私有 `content_hash`、公开 `public_hash`、active `release_id` 和 `source`。
+- `PUT /instances/{id}/config`：请求包含 `expected_revision`、完整 `config`、可选 `reason`；统一返回 202 和配置发布任务 ID。Web 请求不直接写生产目录。
+- `POST /instances/{id}/config-restores`：包含 `source_revision`、`expected_revision`、`reason`，复制历史 payload 并排队创建更高 revision；不能直接激活旧 revision。
 
-版本不符返回 409 和当前 revision；不能自动合并事件/链接或覆盖原生后台更新。响应不包含后台密码哈希。
+版本不符返回 409 和当前 revision；不能自动合并事件/链接或覆盖原生后台更新。发布任务通过同一 `publish_config` 库生成私有 canonical 文档、白名单公开 JS 和完整 release，再原子切换 `current`。响应不包含后台密码哈希或公开字段白名单之外的私有值。
 
 ### 7.2 负责人转交
 

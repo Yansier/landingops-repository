@@ -8,6 +8,7 @@
   "properties": {
     "pixel_ids": {
       "type": "array",
+      "x-landingops-visibility": "public",
       "maxItems": 10,
       "uniqueItems": true,
       "items": {
@@ -18,6 +19,7 @@
     },
     "events": {
       "type": "object",
+      "x-landingops-visibility": "public",
       "additionalProperties": false,
       "required": ["download", "add_to_cart", "purchase"],
       "properties": {
@@ -28,6 +30,7 @@
     },
     "links": {
       "type": "object",
+      "x-landingops-visibility": "public",
       "additionalProperties": false,
       "required": ["download_url", "redirect_url"],
       "properties": {
@@ -39,7 +42,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "headline": {"type": "string", "maxLength": 120}
+        "headline": {
+          "type": "string",
+          "maxLength": 120,
+          "x-landingops-visibility": "public"
+        }
       },
       "default": {}
     }

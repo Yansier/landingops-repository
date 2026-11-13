@@ -48,7 +48,18 @@
   "config": {
     "schema": "config.schema.json",
     "local_path": ".landingops/config.json",
-    "schema_version": "1.0.0"
+    "schema_version": "1.0.0",
+    "delivery": {
+      "mode": "generated_js",
+      "script_placeholder": "__LANDINGOPS_PUBLIC_CONFIG_ASSET__",
+      "global_name": "__LANDINGOPS_CONFIG__",
+      "public_paths": [
+        "pixel_ids",
+        "events",
+        "links",
+        "custom.headline"
+      ]
+    }
   },
   "integrity": {
     "algorithm": "sha256"

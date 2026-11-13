@@ -29,6 +29,8 @@ erDiagram
   PRIMARY_DOMAINS ||--o{ INSTANCES : hosts
   INSTANCES ||--o{ INSTANCE_OWNER_HISTORY : transfers
   INSTANCES ||--o{ CONFIG_VERSIONS : configures
+  INSTANCES ||--o{ SITE_RELEASES : publishes
+  CONFIG_VERSIONS ||--o{ SITE_RELEASES : materializes
   USERS ||--o{ CONFIG_VERSIONS : authors
   DEPLOYMENT_BATCHES ||--o{ DEPLOYMENT_JOBS : groups
   INSTANCES ||--o{ DEPLOYMENT_JOBS : deploys
@@ -122,7 +124,7 @@ erDiagram
 
 ### `instances`
 
-`id`, `team_id`, `template_version_id`, `primary_domain_id`, `fqdn`, `normalized_fqdn`, `site_path_key`, `status`, `created_by_user_id`, `current_owner_user_id`, `native_admin_enabled`, `backup_page_asset_id NULL`, `vendor_component_version_id NULL`, `active_config_revision`, `created_at`, `updated_at`, `archived_at NULL`。
+`id`, `team_id`, `template_version_id`, `primary_domain_id`, `fqdn`, `normalized_fqdn`, `site_path_key`, `status`, `created_by_user_id`, `current_owner_user_id`, `native_admin_enabled`, `backup_page_asset_id NULL`, `vendor_component_version_id NULL`, `active_config_revision`, `active_release_id NULL`, `created_at`, `updated_at`, `archived_at NULL`。
 
 - `UNIQUE(normalized_fqdn)`、`UNIQUE(site_path_key)`。
 - 创建人不可更新；负责人必须为同团队启用用户（总管理员操作仍不能把负责人设成跨团队员工）。
@@ -145,11 +147,22 @@ erDiagram
 
 ### `config_versions`
 
-`id`, `instance_id`, `revision`, `schema_version`, `content_hash`, `config_json`, `source(landingops|native_admin|reconciled)`, `status(pending|applied|conflict|failed)`, `base_revision`, `created_by_user_id NULL`, `applied_at NULL`, `created_at`。
+`id`, `instance_id`, `revision`, `schema_version`, `content_hash`, `public_hash`, `config_json`, `source(landingops|native_admin|reconciled|restore)`, `status(pending|applied|conflict|failed)`, `base_revision`, `restored_from_config_version_id NULL`, `created_by_user_id NULL`, `applied_at NULL`, `created_at`。
 
-- `UNIQUE(instance_id, revision)`、`UNIQUE(instance_id, content_hash)`（相同内容可避免重复发布）。
+- `UNIQUE(instance_id, revision)`；`INDEX(instance_id, content_hash)` 为**非唯一索引**，允许同一历史内容在恢复时以更高 revision 再次发布。
+- 同请求重复提交由 API `Idempotency-Key`、任务幂等键和 `base_revision + request_digest` 判定，而不是依赖内容 hash 唯一。普通无变化更新可由服务层返回当前版本；显式恢复即使内容相同，也必须创建新 revision 并设置 `restored_from_config_version_id`。
 - `config_json` 不含原生后台密码哈希或其他密钥。
-- `instances.active_config_revision` 与本地文件协调，不能在本地写成功前先推进。
+- `content_hash` 是私有 canonical payload 摘要；`public_hash` 是白名单前台投影摘要，二者用途不同且都不作为唯一键。
+- `instances.active_config_revision/active_release_id` 与本地 `current` release 协调，不能在发布切换及健康检查成功前推进；循环外键可在迁移中把 `active_release_id` 设为可空并后加约束，或只由服务层核验。
+
+### `site_releases`
+
+`id`, `instance_id`, `config_version_id`, `release_no`, `release_path_key`, `manifest_hash`, `public_config_asset`, `public_hash`, `status(staged|active|known_good|failed|retained|purged)`, `previous_release_id NULL`, `activated_at NULL`, `health_checked_at NULL`, `failure_summary NULL`, `created_at`。
+
+- `UNIQUE(instance_id, release_no)`、`UNIQUE(instance_id, release_path_key)`；`public_config_asset` 必须是相对内容寻址路径。
+- 一个实例最多一个 `active` release，由生成列唯一索引或事务锁+服务层约束保证；`current` 指向与数据库状态不一致时先以本地 release manifest 核验并协调。
+- release manifest 保存 HTML、公开 JS、私有 canonical 配置版本和文件哈希的对应关系，但不保存任何明文密钥。
+- 切换前失败的 staged release 可隔离/清理；切换后健康检查失败记录为 failed 并恢复上一 known-good 指针，active config revision 不推进。
 
 ## 9. 部署批次、任务与步骤
 
@@ -208,4 +221,6 @@ erDiagram
 - 模板 ZIP、组件和备用页按内容哈希验证并备份；生产保留期由管理员政策确认。
 - 审计、部署任务和负责人历史不能因业务对象软删除而消失。
 - 数据库备份恢复不等于站点配置回滚。恢复控制面后应先读取各站点本地 revision/hash 做协调，禁止批量下发数据库旧配置。
+- V1 默认本地保留最近 10 个成功 release，且至少覆盖最近 30 天；只有同时超出数量与时间门槛、且不被 active/known-good/任务引用的 release 才可清理。数据库配置版本默认保留 180 天，具体值需按磁盘与合规要求确认。
+- 历史恢复执行“复制旧 payload → 新 revision → 新 release”，`restored_from_config_version_id` 指回来源；绝不复用旧 revision，也不会触发内容 hash 唯一冲突。
 

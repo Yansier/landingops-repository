@@ -36,12 +36,16 @@ flowchart LR
   W -->|按实际版本适配| BT[唯一宝塔 API]
   W -->|按 Zone 选择连接| CF1[Cloudflare 连接 A]
   W -->|按 Zone 选择连接| CF2[Cloudflare 连接 B..N]
-  BT --> N[Nginx / PHP / 站点目录]
+  BT --> N[Nginx / PHP / current release]
   CF1 --> DNS[DNS]
   CF2 --> DNS
   V[网站访客] -->|DNS 后直连| N
-  N --> LC[(实例本地配置)]
-  A[可选原生后台] -->|同站点、版本化原子写| LC
+  N --> PUB[HTML + 内容寻址公开配置 JS]
+  N -->|仅本站 PHP / FPM 权限内| LC[(私有 canonical 配置)]
+  W -->|实例锁 / 发布完整 release| LC
+  W -->|白名单投影 / 原子切换 current| PUB
+  A[可选原生后台] -->|同一 publish_config 库| LC
+  A -->|生成 release / 原子切换| PUB
   N -.禁止运行时调用.-> API
 ```
 
@@ -55,8 +59,9 @@ flowchart LR
 2. 一个数据库事务创建实例草稿、唯一 FQDN 预留、配置期望版本、部署任务和步骤定义。
 3. 执行器以数据库租约领取任务。V1 不引入 Redis/RabbitMQ；MySQL `jobs` 表 + `SELECT ... FOR UPDATE SKIP LOCKED`（需确认 MySQL 版本）足以承载轻量任务。
 4. 执行器在调用外部系统前后写步骤状态和幂等证据。外部调用超时视为“结果未知”，必须先查询核验，不能盲目重放创建。
-5. 文件构建在私有临时目录完成，通过校验后发布到专属站点目录；最终写入本地配置。
-6. DNS/SSL/HTTPS 验证成功后实例激活。控制面只保存状态和审计，退出访客链路。
+5. 文件构建在实例私有暂存区完成；canonical 配置按 manifest 白名单生成无敏感信息的内容寻址前台 JS，HTML 与 JS 在同一不可变 release 中校验。
+6. 通过同文件系统的临时符号链接/指针原子切换 `current`；活动 release 内不原位覆盖文件。宝塔若生成默认根目录，必须先识别并隔离已知引导文件，发现未知内容立即阻止。
+7. DNS/SSL/HTTPS 验证成功后实例激活。控制面只保存状态和审计，退出访客链路。
 
 ### 4.2 多 Cloudflare 路由
 
@@ -68,9 +73,11 @@ flowchart LR
 
 - 站点本地配置包含 `schema_version`、单调递增 `revision`、`content_hash`、`updated_at` 和 `updated_by`。
 - LandingOps 和原生后台写入时都必须提交 `expected_revision`，在站点侧取得文件锁，重新读取并比较。
-- 新内容先写同目录临时文件，`fsync`/关闭后校验 JSON，再执行原子重命名；保留最近一个已知良好版本用于恢复。
+- LandingOps 与原生后台调用相同的 `publish_config` 库：在实例锁内写私有 canonical 配置、按公开字段白名单生成 `assets/landingops.config.r<revision>.<hash12>.js`、更新 HTML 精确占位符，并校验完整 release。
+- 新 release 在同文件系统写入并 `fsync`/关闭，校验 manifest 后以临时 `current` 链接原子重命名切换；活动 release 内禁止原位修改。HTML 使用 `no-cache`，内容寻址 JS 使用一年 `immutable` 缓存。
 - LandingOps 数据库只在站点写成功后把配置版本记为 `applied`。超时后先读取本地版本/哈希判定是否成功。
 - 版本冲突返回当前 revision 和安全的差异摘要，由用户重新加载；禁止“数据库旧值覆盖站点新值”。
+- 主动恢复历史内容会复制旧 payload 并创建更高 revision；切换前失败不改变 active revision，切换后健康检查失败可原子回到上一已知良好 release。
 
 ## 5. 任务状态机
 
@@ -105,11 +112,34 @@ V1 采用 **MySQL 持久化任务队列 + PHP CLI worker**：
 
 ## 7. 文件与进程边界
 
-- 控制面上传物、解压临时目录、供应商组件和备用页版本存放在 Web 根目录之外。
-- 实例目录由配置的站点根父目录派生，路径不接受用户直接输入；以实例 UUID/安全 slug 映射。
+- 控制面应用配置、上传物、解压临时目录、供应商组件和备用页版本均在 Web 根目录之外；实例目录由配置的站点根父目录派生，路径不接受用户输入。
 - ZIP 解压拒绝绝对路径、`..`、符号链接/硬链接、设备文件、超限文件数/解压大小和扩展名策略违规。
-- 工作进程使用最小权限服务账号。第三方 Token 解密仅发生在适配器调用期，不传到前端、任务输入 JSON 或普通日志。
+- 上传暂存目录挂载/配置为不可执行，基准目录 `0700`、文件 `0600`，再以命名 ACL 仅授予 Web 用户 intake 的 `write+traverse`、worker 的 `read/write/traverse`；Web 用户没有目录列举权，也不能执行或读取已验证模板库。worker 扫描后以只读内容哈希对象归档。
+- 控制面 Web、CLI worker 和每个站点 PHP-FPM 使用不同 Unix 身份。Web 用户不能写站点；worker 通过实例级 ACL 只写受管暂存/release/current；站点用户不能遍历控制面、模板库、其他实例或其他团队目录。
+- 每个含 PHP/原生后台的实例使用独立 PHP-FPM pool/Unix 用户；`open_basedir` 至少限定本站 releases、staging 与 tmp。若目标宝塔无法提供等价隔离，V1 只允许静态模板，PHP/原生后台不得启用。
+- 每个 release 同时包含 `public/` 和非 Web 根的 `private/`；`current` 一次切换同时激活 HTML/公开 JS 与 canonical 配置。`public` 建议 `0755/0644`，`private` 默认 `0750/0640`。原生后台只可在本站创建 staging release并切换本站 current，不能原位修改 active release。
+- 平台密钥目录建议 `0750/0640` 且站点用户无遍历权；Nginx root 固定为 `current/public`，从路径层面排除 `current/private`。
+- 第三方 Token 解密仅发生在适配器调用期，不传到前端、站点进程、任务输入 JSON 或普通日志。
 - 供应商 `index.php/core.php` 与模板原始 `index.html` 分版本存储；构建器按合法集成清单装配，默认不修改供应商核心逻辑。
+
+建议生产目录边界（实际绝对路径待宝塔环境确认）：
+
+```text
+control-plane/                 # Web 可读应用；站点用户不可遍历
+private-secrets/               # Web/worker 所需最小凭据；站点用户不可访问
+uploads/intake/                # Web 只写、worker 读写；noexec
+template-store/                # worker 只读；Web/站点不可访问
+instances/<instance-key>/
+├── releases/<release-id>/
+│   ├── public/                # HTML、资源、公开配置 JS
+│   ├── private/               # canonical 配置/本站认证，不是 Web root
+│   └── release-manifest.json  # 两侧内容的版本与哈希对应关系
+├── current -> releases/...    # worker 原子切换
+├── staging/                   # worker/本站发布库的临时 release
+└── tmp/                       # 本站临时目录，无跨实例权限
+```
+
+不能只依赖 `open_basedir`：Unix 所有者、组/ACL、目录遍历权和独立 FPM pool 是最小隔离；容器可作为加强项但不是 V1 前提。
 
 ## 8. 故障隔离
 
@@ -118,7 +148,7 @@ V1 采用 **MySQL 持久化任务队列 + PHP CLI worker**：
 | LandingOps API/DB/worker 停机 | 无法创建/更新；任务暂停 | 已部署站点只读本地文件，继续服务 |
 | 某 Cloudflare 连接失效 | 对应 Zone 的新任务失败/等待 | 其他连接和既有 DNS 不受影响 |
 | 宝塔 API 不可用 | 新部署/证书操作暂停 | Nginx/PHP 现有站点不依赖 API 可用性 |
-| 配置写入中断 | 本次更新失败 | 同目录原子替换，旧配置仍可读 |
+| 配置/release 写入中断 | 本次更新失败 | `current` 不变，旧 release 的公开与私有配置仍配套可读 |
 | 批量中一行失败 | 单行失败 | 每行独立事务性任务，其他行继续 |
 | 任务执行器崩溃 | 当前步骤结果可能未知 | 租约恢复；先查询外部状态再重试 |
 
