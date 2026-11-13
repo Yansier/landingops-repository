@@ -47,6 +47,25 @@ function removeIntegrationDirectory(string $path): void
     @rmdir($path);
 }
 
+function activeKeyAnomalyCount(PDO $pdo): int
+{
+    return (int) $pdo->query(
+        "SELECT "
+        . "(SELECT COUNT(*) FROM site_releases WHERE "
+        . "(status = 'active' AND (active_instance_id IS NULL OR active_instance_id <> instance_id)) "
+        . "OR (status <> 'active' AND active_instance_id IS NOT NULL)) + "
+        . "(SELECT COUNT(*) FROM domain_reservations WHERE "
+        . "(status IN ('held','committed') AND (active_fqdn IS NULL OR active_fqdn <> normalized_fqdn)) "
+        . "OR (status IN ('released','expired') AND active_fqdn IS NOT NULL))",
+    )->fetchColumn();
+}
+
+function showCreateTable(PDO $pdo, string $table): string
+{
+    $row = $pdo->query("SHOW CREATE TABLE `{$table}`")->fetch(PDO::FETCH_ASSOC);
+    return is_array($row) ? (string) array_values($row)[1] : '';
+}
+
 function verifyMigrationRecovery(PDO $pdo, MigrationRunner $runner): void
 {
     $baseVersion = '991_phase1c1_recovery_base';
@@ -148,9 +167,41 @@ try {
         version_compare($numericVersion, $minimumVersion, '>='),
         ($isMariaDb ? 'MariaDB' : 'MySQL') . ' 版本低于支持下限 ' . $minimumVersion . '：' . $version,
     );
+    $existingActiveKeyTables = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() "
+        . "AND table_name IN ('site_releases', 'domain_reservations')",
+    )->fetchColumn();
+    if ($existingActiveKeyTables === 2) {
+        integrationAssert(activeKeyAnomalyCount($pdo) === 0, '002 执行前发现活动键历史异常，必须人工处理。');
+        fwrite(STDOUT, "INFO: 002 执行前历史活动键异常记录为 0。\n");
+    }
+
     $runner = new MigrationRunner();
     $runner->migrate($pdo, $root . '/database/migrations');
+    integrationAssert(activeKeyAnomalyCount($pdo) === 0, '002 执行后出现活动键异常。');
+    $structureBeforeRepeat = [
+        showCreateTable($pdo, 'site_releases'),
+        showCreateTable($pdo, 'domain_reservations'),
+    ];
+    $dataBeforeRepeat = [
+        (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+    ];
     integrationAssert($runner->migrate($pdo, $root . '/database/migrations') === [], '第二次迁移不应应用版本。');
+    integrationAssert($structureBeforeRepeat === [
+        showCreateTable($pdo, 'site_releases'),
+        showCreateTable($pdo, 'domain_reservations'),
+    ], '重复执行迁移改变了活动键表结构。');
+    integrationAssert($dataBeforeRepeat === [
+        (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
+        (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+    ], '重复执行迁移改变了活动键表数据。');
+    $newCheckCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
+        . "AND constraint_name IN ('chk_site_releases_active_key_not_null', "
+        . "'chk_domain_reservations_active_key_not_null') AND constraint_type = 'CHECK'",
+    )->fetchColumn();
+    integrationAssert($newCheckCount === 2, '002 的两个严格 CHECK 未完整创建。');
 
     $businessTables = [
         'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
@@ -192,6 +243,7 @@ try {
     $zoneId = $ids->generate();
     $domainId = $ids->generate();
     $instanceId = $ids->generate();
+    $configVersionId = $ids->generate();
 
     $pdo->beginTransaction();
     try {
@@ -276,6 +328,84 @@ try {
             strtolower($instanceId) . '.invalid', 'integration-' . strtolower($instanceId), $staffAId, $staffAId, $now, $now,
         ]);
 
+        $digest = 'sha256:' . hash('sha256', random_bytes(32));
+        $pdo->prepare(
+            "INSERT INTO config_versions(id,instance_id,revision,schema_version,content_hash,public_hash,config_json,"
+            . "source,status,base_revision,created_by_user_id,created_at) VALUES (?,?,1,'1.0',?,?,?,'landingops',"
+            . "'applied',0,?,?)",
+        )->execute([$configVersionId, $instanceId, $digest, $digest, '{}', $adminAId, $now]);
+
+        $insertRelease = $pdo->prepare(
+            "INSERT INTO site_releases(id,instance_id,config_version_id,release_no,release_path_key,manifest_hash,"
+            . "public_config_asset,public_hash,status,previous_release_id,active_instance_id,created_at) "
+            . "VALUES (?,?,?,?,?,?,?,?,?,NULL,?,?)",
+        );
+        expectPdoConstraint(
+            static fn () => $insertRelease->execute([
+                $ids->generate(), $instanceId, $configVersionId, 1, 'release-null', $digest,
+                'assets/config-null.js', $digest, 'active', null, $now,
+            ]),
+            'active release 的 NULL active_instance_id 未被拒绝。',
+        );
+        expectPdoConstraint(
+            static fn () => $insertRelease->execute([
+                $ids->generate(), $instanceId, $configVersionId, 2, 'release-mismatch', $digest,
+                'assets/config-mismatch.js', $digest, 'active', $ids->generate(), $now,
+            ]),
+            'active release 的错配 active_instance_id 未被拒绝。',
+        );
+        $insertRelease->execute([
+            $ids->generate(), $instanceId, $configVersionId, 3, 'release-active', $digest,
+            'assets/config-active.js', $digest, 'active', $instanceId, $now,
+        ]);
+        expectPdoConstraint(
+            static fn () => $insertRelease->execute([
+                $ids->generate(), $instanceId, $configVersionId, 4, 'release-second-active', $digest,
+                'assets/config-second.js', $digest, 'active', $instanceId, $now,
+            ]),
+            '相同实例的第二个 active release 未被拒绝。',
+        );
+        $insertRelease->execute([
+            $ids->generate(), $instanceId, $configVersionId, 5, 'release-staged', $digest,
+            'assets/config-staged.js', $digest, 'staged', null, $now,
+        ]);
+
+        $insertReservation = $pdo->prepare(
+            "INSERT INTO domain_reservations(id,normalized_fqdn,instance_id,job_id,status,lease_expires_at,created_at,"
+            . "updated_at,active_fqdn) VALUES (?,?,?,NULL,?,?,?,?,?)",
+        );
+        $reservedFqdn = strtolower($ids->generate()) . '.integration.invalid';
+        expectPdoConstraint(
+            static fn () => $insertReservation->execute([
+                $ids->generate(), $reservedFqdn, $instanceId, 'held', $now, $now, $now, null,
+            ]),
+            'held 预留的 NULL active_fqdn 未被拒绝。',
+        );
+        expectPdoConstraint(
+            static fn () => $insertReservation->execute([
+                $ids->generate(), strtolower($ids->generate()) . '.integration.invalid', $instanceId,
+                'committed', $now, $now, $now, null,
+            ]),
+            'committed 预留的 NULL active_fqdn 未被拒绝。',
+        );
+        $insertReservation->execute([
+            $ids->generate(), $reservedFqdn, $instanceId, 'held', $now, $now, $now, $reservedFqdn,
+        ]);
+        expectPdoConstraint(
+            static fn () => $insertReservation->execute([
+                $ids->generate(), $reservedFqdn, $instanceId, 'committed', $now, $now, $now, $reservedFqdn,
+            ]),
+            '相同 FQDN 的第二个活动预留未被拒绝。',
+        );
+        $insertReservation->execute([
+            $ids->generate(), strtolower($ids->generate()) . '.integration.invalid', $instanceId,
+            'released', $now, $now, $now, null,
+        ]);
+        $insertReservation->execute([
+            $ids->generate(), strtolower($ids->generate()) . '.integration.invalid', $instanceId,
+            'expired', $now, $now, $now, null,
+        ]);
+
         $super = Principal::fromRow($repository->findUserById($superId) ?? []);
         $adminA = Principal::fromRow($repository->findUserById($adminAId) ?? []);
         $sessions = new SessionService($repository);
@@ -336,7 +466,8 @@ try {
         }
     }
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
-        . "；22 表、重复/失败迁移恢复、FK/CHECK/UNIQUE、PDO Session、负责人事务及单宝塔约束均通过。\n");
+        . "；22 表、002 NULL/错配/活动唯一键、重复/失败迁移恢复、FK/CHECK/UNIQUE、"
+        . "PDO Session、负责人事务及单宝塔约束均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')
         . $exception->getMessage() . PHP_EOL);

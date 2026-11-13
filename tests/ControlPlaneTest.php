@@ -376,7 +376,14 @@ return [
     },
 
     'migration sql defines v1 constraints without secrets' => static function (): void {
-        $sql = (string) file_get_contents(dirname(__DIR__) . '/database/migrations/001_v1_control_plane.sql');
+        $migrationDirectory = dirname(__DIR__) . '/database/migrations';
+        $migration001 = $migrationDirectory . '/001_v1_control_plane.sql';
+        $sql = (string) file_get_contents($migration001);
+        TestHarness::assertSame(
+            '72e62312d5eb77b9364c032d60ec720a94df040a3f6dfb38d0a2d2fcdef1eac9',
+            hash_file('sha256', $migration001),
+            '001 migration must remain immutable after Phase 1C.1 acceptance.',
+        );
         foreach ([
             'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
             'baota_config', 'cloudflare_connections', 'cloudflare_zones', 'primary_domains', 'domain_grants',
@@ -395,5 +402,16 @@ return [
         TestHarness::assertContains('CONSTRAINT chk_domain_reservations_active_key CHECK', $sql);
         TestHarness::assertNotContains('password123', strtolower($sql));
         TestHarness::assertTrue(count((new SqlStatementSplitter())->split($sql)) >= 20);
+
+        $sql002 = (string) file_get_contents($migrationDirectory . '/002_fix_active_key_null_constraints.sql');
+        TestHarness::assertContains('active_instance_id IS NOT NULL', $sql002);
+        TestHarness::assertContains('active_fqdn IS NOT NULL', $sql002);
+        TestHarness::assertContains('chk_site_releases_active_key_not_null', $sql002);
+        TestHarness::assertContains('chk_domain_reservations_active_key_not_null', $sql002);
+        TestHarness::assertTrue(
+            strpos($sql002, 'INSERT INTO landingops_002_active_key_guard')
+                < strpos($sql002, 'ALTER TABLE site_releases'),
+            'Historical anomaly guard must run before permanent DDL.',
+        );
     },
 ];

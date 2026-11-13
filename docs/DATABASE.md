@@ -229,6 +229,8 @@ erDiagram
 
 `database/migrations/001_v1_control_plane.sql` 是首个可执行 MySQL 8 / MariaDB 10.6+ 迁移，覆盖本文 V1 表：团队、用户、Session、模板/版本/授权、唯一宝塔配置、多个 Cloudflare Connection/Zone、主域名/授权、实例/负责人历史、配置版本/release、批次/任务/步骤、域名预留、备用页、供应商组件和审计。
 
+`database/migrations/002_fix_active_key_null_constraints.sql` 保持 001 不变，修复 SQL 三值逻辑：active release 必须显式满足 `active_instance_id IS NOT NULL AND active_instance_id = instance_id`；held/committed 预留必须显式满足 `active_fqdn IS NOT NULL AND active_fqdn = normalized_fqdn`。原 UNIQUE 约束继续负责活动键并发唯一。002 在永久 DDL 前以临时 guard 汇总扫描两表；存在历史异常时直接失败，不自动改写记录。
+
 迁移器具备以下约束：
 
 - 只接受 PDO `mysql` 驱动，拒绝 SQLite 等替代驱动；所有 DDL 使用 `CREATE TABLE IF NOT EXISTS`。
@@ -238,5 +240,5 @@ erDiagram
 - `config_versions(instance_id, content_hash)` 是普通索引而非唯一约束，恢复旧内容可分配新 revision。
 - `auth_sessions` 只保存 Cookie/CSRF Token 的 SHA-256 二进制摘要；数据库初始化脚本不含默认账号、明文密码、密码哈希或真实第三方凭据。
 
-真实 MySQL 的版本、DDL、外键、CHECK 和唯一约束必须通过 `tests/mysql-integration.php` 在专用、名称以 `_test` 结尾的数据库复核。无 MySQL 环境时只能执行 SQL 契约与服务层测试，不能声称已经验证 MySQL 兼容性。
+真实 MySQL/MariaDB 的版本、DDL、外键、CHECK 和唯一约束必须通过 `tests/mysql-integration.php` 在专用 `landingops_test` 数据库复核。无真实数据库环境时只能执行 SQL 契约与服务层测试，不能声称已经验证数据库兼容性。
 

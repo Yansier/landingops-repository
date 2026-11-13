@@ -76,6 +76,7 @@ Phase 1A/1A.1 的直接验收对象是文档与契约的一致性。下列 V1 �
 | --- | --- | --- |
 | JOB-01 P0 | 合法单站部署 | 每步可追踪，最终 DNS/站点/文件/SSL 验证通过，实例 active |
 | JOB-02 P0 | 并发提交同一 FQDN | 只有一个持有活动预留；另一请求明确冲突 |
+| JOB-02A P0 | held/committed 预留提交 NULL `active_fqdn`，或提交第二个相同活动 FQDN | CHECK/UNIQUE 拒绝；released/expired 可使用 NULL |
 | JOB-03 P1 | 批量 5 行，其中 1 行配置错误、1 行外部失败 | 错误行提交前标识；有效行各自执行，可产生部分成功 |
 | JOB-04 P1 | 重试批量失败项 | 只重试失败单站任务，已成功项不重复部署 |
 | JOB-05 P0 | worker 在外部创建后、回写前崩溃 | 租约恢复后先查询外部状态，避免重复资源 |
@@ -105,6 +106,7 @@ Phase 1A/1A.1 的直接验收对象是文档与契约的一致性。下列 V1 �
 | CFG-13 P0 | release 切换前中断 | active current/revision 不变；staging 可安全隔离 |
 | CFG-14 P0 | 切换后健康检查失败 | current 原子回到上一 known-good；失败 revision 不成为 active |
 | CFG-15 P0 | 恢复与当前 content_hash 相同的历史内容 | 创建更高 revision 成功；数据库非唯一 hash 索引不冲突，并记录来源版本 |
+| CFG-15A P0 | active release 提交 NULL/错配 `active_instance_id`，或同实例提交第二个 active release | CHECK/UNIQUE 拒绝；非 active release 可使用 NULL |
 | CFG-16 P1 | 显式启用原生后台 | 要求至少 12 字符用户密码；明文不进入日志、任务或响应，只保存现代哈希 |
 
 ## 9. 负责人转交与审计

@@ -121,6 +121,7 @@ php bin/landingops-control --help
 - 首次发现 `utf8mb4_0900_ai_ci` 为 Oracle MySQL 8 专属，MariaDB 返回 1273；迁移改为双方支持的 `utf8mb4_unicode_ci`。
 - 随后发现 MariaDB 不接受字符串状态生成列，返回 1901；`active_instance_id` / `active_fqdn` 改为显式可空键，并以 `CHECK + UNIQUE` 保持相同约束。
 - 最终通过：22 张业务表、迁移重复执行、故障注入后的安全恢复、FK/CHECK/UNIQUE、真实 PDO 登录/Session/CSRF/登出、模板授权撤销与再次授权、负责人事务与乐观锁、单宝塔配置唯一约束。
+- 验收补充迁移 002 保持已执行的 001 不变；执行前确认两张活动键表历史异常记录为 0。MariaDB 实测拒绝 active release 的 NULL/错配键、同实例第二个 active release、held/committed 的 NULL 键及同 FQDN 第二个活动预留；staged、released、expired 的 NULL 键合法。重复迁移未改变结构或数据。
 - 测试业务数据已回滚，故障注入表和临时迁移记录已清理；测试库保留正式 schema 与 `schema_migrations` 记录。SSH 隧道在测试后关闭。
 
 ## 8. 当前遗留边界
