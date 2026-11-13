@@ -11,13 +11,14 @@ use stdClass;
 final class ConfigProjector
 {
     /** @param list<string> $publicPaths */
-    public function project(stdClass $config, array $publicPaths): stdClass
+    public function project(stdClass $config, stdClass $schema, array $publicPaths): stdClass
     {
         $projected = new stdClass();
         foreach ($publicPaths as $path) {
             $segments = explode('.', $path);
             $value = $this->read($config, $segments, $path);
-            $this->write($projected, $segments, $value);
+            $schemaNode = $this->resolvePropertyPath($schema, $segments, $path);
+            $this->write($projected, $segments, $this->projectValue($value, $schemaNode, $schema, $path));
         }
 
         return $projected;
@@ -103,5 +104,130 @@ final class ConfigProjector
     private function cloneValue(mixed $value): mixed
     {
         return Json::decode(Json::canonical($value), '投影配置');
+    }
+
+    /** @param list<string> $segments */
+    private function resolvePropertyPath(stdClass $root, array $segments, string $path): stdClass
+    {
+        $node = $root;
+        foreach ($segments as $segment) {
+            $resolved = $this->dereference($node, $root, $path);
+            if (($resolved->type ?? null) !== 'object'
+                || !(($resolved->properties ?? null) instanceof stdClass)
+                || !property_exists($resolved->properties, $segment)
+                || !($resolved->properties->{$segment} instanceof stdClass)
+            ) {
+                throw new LandingOpsException('公开配置路径在 schema 中不存在：' . $path);
+            }
+            $node = $resolved->properties->{$segment};
+        }
+        return $node;
+    }
+
+    /** @param array<string,bool> $refStack */
+    private function projectValue(
+        mixed $value,
+        stdClass $node,
+        stdClass $root,
+        string $path,
+        array $refStack = [],
+    ): mixed
+    {
+        if (($node->{'x-landingops-visibility'} ?? null) !== 'public') {
+            throw new LandingOpsException('公开配置节点未显式标记 public：' . $path);
+        }
+
+        if (property_exists($node, '$ref')) {
+            $reference = (string) $node->{'$ref'};
+            if (isset($refStack[$reference])) {
+                throw new LandingOpsException('公开配置包含循环 $ref：' . $path);
+            }
+            $refStack[$reference] = true;
+            $target = $this->dereference($node, $root, $path);
+            return $this->projectValue($value, $target, $root, $path . '.$ref', $refStack);
+        }
+
+        if (is_array($node->oneOf ?? null)) {
+            foreach ($node->oneOf as $index => $branch) {
+                if ($branch instanceof stdClass && $this->matchesDeclaredType($value, $branch, $root, $path)) {
+                    return $this->projectValue($value, $branch, $root, $path . '.oneOf.' . $index, $refStack);
+                }
+            }
+            throw new LandingOpsException('公开配置无法选择 oneOf 分支：' . $path);
+        }
+
+        if (!$this->matchesDeclaredType($value, $node, $root, $path)) {
+            throw new LandingOpsException('公开配置值与 schema 类型不一致：' . $path);
+        }
+
+        if (($node->type ?? null) === 'object' && $value instanceof stdClass) {
+            $output = new stdClass();
+            $properties = ($node->properties ?? null) instanceof stdClass
+                ? $node->properties
+                : new stdClass();
+            foreach (get_object_vars($value) as $name => $childValue) {
+                $child = $properties->{$name} ?? null;
+                if (!($child instanceof stdClass)
+                    || ($child->{'x-landingops-visibility'} ?? null) !== 'public'
+                ) {
+                    continue;
+                }
+                $output->{$name} = $this->projectValue(
+                    $childValue,
+                    $child,
+                    $root,
+                    $path . '.' . $name,
+                    $refStack,
+                );
+            }
+            return $output;
+        }
+
+        if (($node->type ?? null) === 'array' && is_array($value)) {
+            $items = $node->items ?? null;
+            if (!($items instanceof stdClass)
+                || ($items->{'x-landingops-visibility'} ?? null) !== 'public'
+            ) {
+                throw new LandingOpsException('公开数组 items 未显式标记 public：' . $path);
+            }
+            $output = [];
+            foreach ($value as $index => $item) {
+                $output[] = $this->projectValue($item, $items, $root, $path . '.' . $index, $refStack);
+            }
+            return $output;
+        }
+
+        return $this->cloneValue($value);
+    }
+
+    private function dereference(stdClass $node, stdClass $root, string $path): stdClass
+    {
+        if (!property_exists($node, '$ref')) {
+            return $node;
+        }
+        $reference = $node->{'$ref'};
+        if (!is_string($reference)
+            || preg_match('~^\#/\$defs/([A-Za-z_][A-Za-z0-9_-]*)$~D', $reference, $matches) !== 1
+            || !(($root->{'$defs'} ?? null) instanceof stdClass)
+            || !(($root->{'$defs'}->{$matches[1]} ?? null) instanceof stdClass)
+        ) {
+            throw new LandingOpsException('公开配置包含无法解析的 $ref：' . $path);
+        }
+        return $root->{'$defs'}->{$matches[1]};
+    }
+
+    private function matchesDeclaredType(mixed $value, stdClass $node, stdClass $root, string $path): bool
+    {
+        $resolved = $this->dereference($node, $root, $path);
+        return match ($resolved->type ?? null) {
+            'object' => $value instanceof stdClass,
+            'array' => is_array($value),
+            'string' => is_string($value),
+            'number' => is_int($value) || is_float($value),
+            'integer' => is_int($value),
+            'boolean' => is_bool($value),
+            'null' => $value === null,
+            default => false,
+        };
     }
 }

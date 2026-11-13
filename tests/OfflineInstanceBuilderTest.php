@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use LandingOps\Contract\Json;
+use LandingOps\Config\ConfigProjector;
 use LandingOps\Instance\OfflineInstanceBuilder;
 use LandingOps\Tests\FixtureFactory;
 use LandingOps\Tests\TestHarness as T;
@@ -30,10 +31,15 @@ return [
         T::assertNotContains('INTERNAL-ONLY-DEMO-MARKER', $js);
         T::assertContains('INTERNAL-ONLY-DEMO-MARKER', (string) file_get_contents($privateConfig));
         T::assertContains($build->publicConfigAsset, (string) file_get_contents($index));
+        T::assertContains($build->publicBaseUrl, (string) file_get_contents($index));
+        T::assertNotContains('src="./assets/', (string) file_get_contents($index));
+        T::assertNotContains('href="./assets/', (string) file_get_contents($index));
         T::assertNotContains('__LANDINGOPS_PUBLIC_CONFIG_ASSET__', (string) file_get_contents($index));
 
         $manifest = Json::decode((string) file_get_contents($manifestPath), 'release manifest');
         T::assertSame($build->releaseId, $manifest->release_id);
+        T::assertSame($build->publicBaseUrl, $manifest->config->public_base_url);
+        T::assertSame($build->publicBaseUrl . $build->publicConfigAsset, $manifest->config->public_url);
         foreach (get_object_vars($manifest->files) as $relative => $metadata) {
             $file = $build->releasePath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
             T::assertSame($metadata->sha256, hash_file('sha256', $file), 'Manifest hash mismatch: ' . $relative);
@@ -55,5 +61,23 @@ return [
         );
         T::assertSame('preserve me', file_get_contents($instance . '/user-file.txt'));
         T::assertFalse(is_file($instance . '/.landingops-instance.json'));
+    },
+
+    'projector omits private and unmarked object children defensively' => static function (): void {
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $config = FixtureFactory::sampleConfig();
+        $schema->properties->events->properties->server_token = (object) [
+            'type' => 'string',
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->properties->events->properties->internal_label = (object) ['type' => 'string'];
+        $config->events->server_token = 'PRIVATE-SERVER-TOKEN';
+        $config->events->internal_label = 'UNMARKED-INTERNAL-LABEL';
+
+        $projected = (new ConfigProjector())->project($config, $schema, ['events']);
+        $json = Json::canonical($projected);
+        T::assertContains('download', $json);
+        T::assertNotContains('PRIVATE-SERVER-TOKEN', $json);
+        T::assertNotContains('UNMARKED-INTERNAL-LABEL', $json);
     },
 ];

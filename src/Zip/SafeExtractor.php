@@ -15,6 +15,7 @@ final class SafeExtractor
 
     public function extract(InspectedArchive $archive, string $destination): void
     {
+        $archive->assertSnapshotIntegrity();
         if (file_exists($destination)) {
             throw new LandingOpsException('安全解压目标必须不存在。');
         }
@@ -84,6 +85,7 @@ final class SafeExtractor
             }
         } finally {
             $zip->close();
+            $archive->assertSnapshotIntegrity();
         }
     }
 }

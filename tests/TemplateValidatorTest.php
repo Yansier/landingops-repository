@@ -6,6 +6,7 @@ use LandingOps\Contract\Json;
 use LandingOps\Template\TemplateValidator;
 use LandingOps\Tests\FixtureFactory;
 use LandingOps\Tests\TestHarness as T;
+use LandingOps\Zip\SafeExtractor;
 use LandingOps\Zip\ZipLimits;
 
 return [
@@ -134,6 +135,63 @@ return [
         T::assertTrue(in_array('schema_public_contains_private', array_column($validation->result->toArray()['errors'], 'code'), true));
     },
 
+    'validator rejects unmarked descendants beneath a public object' => static function (): void {
+        $dir = T::tempDirectory('unmarked-descendant');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        unset($schema->{'$defs'}->toggle->properties->enabled->{'x-landingops-visibility'});
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue(in_array(
+            'schema_public_descendant_visibility',
+            array_column($validation->result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
+    'validator rejects unmarked items beneath a public array' => static function (): void {
+        $dir = T::tempDirectory('unmarked-array-items');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        unset($schema->properties->pixel_ids->items->{'x-landingops-visibility'});
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue(in_array(
+            'schema_public_descendant_visibility',
+            array_column($validation->result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
+    'validator accepts recursively explicit public nested references' => static function (): void {
+        $dir = T::tempDirectory('nested-ref-public');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $schema->{'$defs'}->toggleAlias = (object) [
+            '$ref' => '#/$defs/toggle',
+            'x-landingops-visibility' => 'public',
+        ];
+        $schema->properties->events->properties->download->{'$ref'} = '#/$defs/toggleAlias';
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue($validation->result->isValid(), Json::encode((object) $validation->result->toArray(), true));
+    },
+
+    'validator rejects unmarked nested reference targets' => static function (): void {
+        $dir = T::tempDirectory('nested-ref-unmarked');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $schema->{'$defs'}->toggleAlias = (object) ['$ref' => '#/$defs/toggle'];
+        $schema->properties->events->properties->download->{'$ref'} = '#/$defs/toggleAlias';
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue(in_array(
+            'schema_public_descendant_visibility',
+            array_column($validation->result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
     'validator rejects missing local schema definitions' => static function (): void {
         $dir = T::tempDirectory('missing-ref');
         $zip = $dir . '/template.zip';
@@ -152,5 +210,29 @@ return [
         ]);
         $validation = (new TemplateValidator())->validate($zip);
         T::assertTrue(in_array('template_private_key_content', array_column($validation->result->toArray()['errors'], 'code'), true));
+    },
+
+    'extractor uses the validated private snapshot after source ZIP replacement' => static function (): void {
+        $dir = T::tempDirectory('zip-replacement');
+        $zip = $dir . '/template.zip';
+        FixtureFactory::sampleZip($zip);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue($validation->result->isValid());
+        $archive = $validation->template?->archive;
+        T::assertTrue($archive !== null);
+        $validatedHash = $archive->sha256;
+
+        unlink($zip);
+        FixtureFactory::zip($zip, [
+            'landingops.json' => '{}',
+            'index.html' => '<h1>REPLACED-ZIP-CONTENT</h1>',
+        ]);
+        T::assertFalse(hash_equals($validatedHash, (string) hash_file('sha256', $zip)));
+
+        $destination = $dir . '/extracted';
+        (new SafeExtractor())->extract($archive, $destination);
+        $index = (string) file_get_contents($destination . '/index.html');
+        T::assertContains('LandingOps 最小模板', $index);
+        T::assertNotContains('REPLACED-ZIP-CONTENT', $index);
     },
 ];

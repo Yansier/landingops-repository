@@ -56,10 +56,9 @@ final class SchemaContractValidator
             }
             if (($node->{'x-landingops-visibility'} ?? null) !== 'public') {
                 $result->addError('schema_public_visibility', '公开路径必须显式标记 x-landingops-visibility=public。', $path);
+                continue;
             }
-            if ($this->containsPrivateNode($node, $schema)) {
-                $result->addError('schema_public_contains_private', '公开路径的子树不得包含 private 字段。', $path);
-            }
+            $this->validatePublicSubtree($node, $schema, $path, $result);
         }
 
         return $result;
@@ -69,6 +68,10 @@ final class SchemaContractValidator
     {
         $node = $schema;
         foreach (explode('.', $path) as $segment) {
+            $node = $this->dereference($node, $schema);
+            if (!($node instanceof stdClass)) {
+                return null;
+            }
             if (($node->type ?? null) !== 'object'
                 || !(($node->properties ?? null) instanceof stdClass)
                 || !property_exists($node->properties, $segment)
@@ -88,6 +91,12 @@ final class SchemaContractValidator
             if (!in_array($keyword, self::ALLOWED_KEYWORDS, true)) {
                 $result->addError('schema_unknown_keyword', '受限 schema 不支持此关键字。', $path . '.' . $keyword);
             }
+        }
+
+        if (property_exists($node, 'x-landingops-visibility')
+            && !in_array($node->{'x-landingops-visibility'}, ['public', 'private'], true)
+        ) {
+            $result->addError('schema_visibility', 'visibility 仅允许 public 或 private。', $path . '.x-landingops-visibility');
         }
 
         if (property_exists($node, '$ref')) {
@@ -200,42 +209,97 @@ final class SchemaContractValidator
         if (property_exists($node, 'format') && $node->format !== 'uri') {
             $result->addError('schema_format', '受限 schema 只支持 uri format。', $path . '.format');
         }
-        if (property_exists($node, 'x-landingops-visibility')
-            && !in_array($node->{'x-landingops-visibility'}, ['public', 'private'], true)
+    }
+
+    /** @param array<string,bool> $refStack */
+    private function validatePublicSubtree(
+        stdClass $node,
+        stdClass $root,
+        string $path,
+        ValidationResult $result,
+        array $refStack = [],
+    ): void
+    {
+        $visibility = $node->{'x-landingops-visibility'} ?? null;
+        if ($visibility !== 'public') {
+            $code = $visibility === 'private'
+                ? 'schema_public_contains_private'
+                : 'schema_public_descendant_visibility';
+            $message = $visibility === 'private'
+                ? '公开路径的子树不得包含 private 字段。'
+                : '公开路径的每个对象属性、数组 items、oneOf 分支和 $ref 目标都必须显式标记 public。';
+            $result->addError($code, $message, $path);
+            return;
+        }
+
+        if (is_string($node->{'$ref'} ?? null)
+            && preg_match('~^\#/\$defs/([A-Za-z_][A-Za-z0-9_-]*)$~D', $node->{'$ref'}, $matches) === 1
         ) {
-            $result->addError('schema_visibility', 'visibility 仅允许 public 或 private。', $path . '.x-landingops-visibility');
+            if (isset($refStack[$matches[1]])) {
+                $result->addError('schema_public_ref_cycle', '公开配置不允许循环 $ref。', $path . '.$ref');
+                return;
+            }
+            $target = $this->dereference($node, $root);
+            if ($target instanceof stdClass) {
+                $refStack[$matches[1]] = true;
+                $this->validatePublicSubtree(
+                    $target,
+                    $root,
+                    $path . '.$ref(' . $matches[1] . ')',
+                    $result,
+                    $refStack,
+                );
+            }
+            return;
+        }
+
+        if (($node->properties ?? null) instanceof stdClass) {
+            foreach (get_object_vars($node->properties) as $name => $child) {
+                if ($child instanceof stdClass) {
+                    $this->validatePublicSubtree($child, $root, $path . '.' . $name, $result, $refStack);
+                }
+            }
+        }
+
+        if (($node->type ?? null) === 'array') {
+            if (($node->items ?? null) instanceof stdClass) {
+                $this->validatePublicSubtree($node->items, $root, $path . '[]', $result, $refStack);
+            } else {
+                $result->addError(
+                    'schema_public_descendant_visibility',
+                    '公开数组必须定义并显式公开 items。',
+                    $path . '.items',
+                );
+            }
+        }
+
+        if (is_array($node->oneOf ?? null)) {
+            foreach ($node->oneOf as $index => $branch) {
+                if ($branch instanceof stdClass) {
+                    $this->validatePublicSubtree(
+                        $branch,
+                        $root,
+                        $path . '.oneOf.' . $index,
+                        $result,
+                        $refStack,
+                    );
+                }
+            }
         }
     }
 
-    /** @param array<string,bool> $visitedRefs */
-    private function containsPrivateNode(stdClass $node, stdClass $root, array $visitedRefs = []): bool
+    private function dereference(stdClass $node, stdClass $root): ?stdClass
     {
-        if (($node->{'x-landingops-visibility'} ?? null) === 'private') {
-            return true;
-        }
-        if (is_string($node->{'$ref'} ?? null)
-            && preg_match('~^\#/\$defs/([A-Za-z_][A-Za-z0-9_-]*)$~D', $node->{'$ref'}, $matches) === 1
-            && !isset($visitedRefs[$matches[1]])
+        $reference = $node->{'$ref'} ?? null;
+        if (!is_string($reference)
+            || preg_match('~^\#/\$defs/([A-Za-z_][A-Za-z0-9_-]*)$~D', $reference, $matches) !== 1
         ) {
-            $defs = $root->{'$defs'} ?? null;
-            if ($defs instanceof stdClass && ($defs->{$matches[1]} ?? null) instanceof stdClass) {
-                $visitedRefs[$matches[1]] = true;
-                if ($this->containsPrivateNode($defs->{$matches[1]}, $root, $visitedRefs)) {
-                    return true;
-                }
-            }
+            return property_exists($node, '$ref') ? null : $node;
         }
-        if (($node->properties ?? null) instanceof stdClass) {
-            foreach (get_object_vars($node->properties) as $child) {
-                if ($child instanceof stdClass && $this->containsPrivateNode($child, $root, $visitedRefs)) {
-                    return true;
-                }
-            }
-        }
-        if (($node->items ?? null) instanceof stdClass && $this->containsPrivateNode($node->items, $root, $visitedRefs)) {
-            return true;
-        }
-        return false;
+
+        $defs = $root->{'$defs'} ?? null;
+        $target = $defs instanceof stdClass ? ($defs->{$matches[1]} ?? null) : null;
+        return $target instanceof stdClass ? $target : null;
     }
 
     private function references(stdClass $node, string $path, stdClass $root, ValidationResult $result): void

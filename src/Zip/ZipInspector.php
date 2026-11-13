@@ -37,7 +37,7 @@ final class ZipInspector
 
     public function inspect(string $path, ValidationResult $result): ?InspectedArchive
     {
-        if (!is_file($path)) {
+        if (!is_file($path) || is_link($path)) {
             $result->addError('zip_not_found', 'ZIP 文件不存在。', $path);
             return null;
         }
@@ -48,10 +48,19 @@ final class ZipInspector
             return null;
         }
 
+        $snapshot = $this->snapshot($path, $archiveSize, $result);
+        if ($snapshot === null) {
+            return null;
+        }
+        [$snapshotPath, $snapshotDirectory, $snapshotHash, $snapshotIdentity] = $snapshot;
+        $retainSnapshot = false;
+
         $zip = new ZipArchive();
-        $opened = $zip->open($path, ZipArchive::RDONLY);
+        $opened = $zip->open($snapshotPath, ZipArchive::RDONLY);
         if ($opened !== true) {
             $result->addError('zip_invalid', sprintf('无法打开 ZIP（错误码 %s）。', (string) $opened), $path);
+            @unlink($snapshotPath);
+            @rmdir($snapshotDirectory);
             return null;
         }
 
@@ -145,14 +154,133 @@ final class ZipInspector
                 return null;
             }
 
-            return new InspectedArchive(
+            $archive = new InspectedArchive(
                 $path,
-                hash_file('sha256', $path),
+                $snapshotPath,
+                $snapshotHash,
                 $entries,
+                $snapshotDirectory,
+                $snapshotIdentity,
             );
+            $retainSnapshot = true;
+            return $archive;
         } finally {
             $zip->close();
+            if (!$retainSnapshot) {
+                @unlink($snapshotPath);
+                @rmdir($snapshotDirectory);
+            }
         }
+    }
+
+    /** @return array{0:string,1:string,2:string,3:array<string,int>}|null */
+    private function snapshot(string $source, int $expectedSize, ValidationResult $result): ?array
+    {
+        $before = lstat($source);
+        if (!is_array($before)) {
+            $result->addError('zip_source_identity', '无法读取 ZIP 源文件身份。', $source);
+            return null;
+        }
+
+        $directory = rtrim(sys_get_temp_dir(), '\\/') . DIRECTORY_SEPARATOR
+            . 'landingops-zip-' . bin2hex(random_bytes(8));
+        if (!mkdir($directory, 0700, true) && !is_dir($directory)) {
+            $result->addError('zip_snapshot_create', '无法创建 ZIP 私有暂存目录。', $source);
+            return null;
+        }
+        @chmod($directory, 0700);
+        $snapshot = $directory . DIRECTORY_SEPARATOR . 'template.zip';
+        $input = fopen($source, 'rb');
+        $output = fopen($snapshot, 'xb');
+        if (!is_resource($input) || !is_resource($output)) {
+            if (is_resource($input)) {
+                fclose($input);
+            }
+            if (is_resource($output)) {
+                fclose($output);
+            }
+            @unlink($snapshot);
+            @rmdir($directory);
+            $result->addError('zip_snapshot_create', '无法创建 ZIP 私有快照。', $source);
+            return null;
+        }
+        @chmod($snapshot, 0600);
+
+        $hash = hash_init('sha256');
+        $copied = 0;
+        try {
+            while (!feof($input)) {
+                $chunk = fread($input, 64 * 1024);
+                if ($chunk === false) {
+                    throw new \RuntimeException('读取 ZIP 源文件失败。');
+                }
+                $length = strlen($chunk);
+                $copied += $length;
+                if ($copied > $this->limits->maxArchiveBytes) {
+                    throw new \RuntimeException('ZIP 复制期间超过大小限制。');
+                }
+                if ($length > 0 && fwrite($output, $chunk) !== $length) {
+                    throw new \RuntimeException('写入 ZIP 私有快照失败。');
+                }
+                hash_update($hash, $chunk);
+            }
+            fflush($output);
+        } catch (\RuntimeException $exception) {
+            $result->addError('zip_snapshot_failed', $exception->getMessage(), $source);
+        } finally {
+            fclose($input);
+            fclose($output);
+        }
+
+        $after = lstat($source);
+        $sourceStable = is_array($after)
+            && $copied === $expectedSize
+            && $this->sameIdentity($before, $after);
+        if (!$result->isValid() || !$sourceStable) {
+            if (!$sourceStable) {
+                $result->addError('zip_source_changed', 'ZIP 在私有快照期间发生变化。', $source);
+            }
+            @unlink($snapshot);
+            @rmdir($directory);
+            return null;
+        }
+
+        $snapshotStat = lstat($snapshot);
+        if (!is_array($snapshotStat) || is_link($snapshot)) {
+            @unlink($snapshot);
+            @rmdir($directory);
+            $result->addError('zip_snapshot_identity', '无法确认 ZIP 私有快照身份。', $source);
+            return null;
+        }
+
+        return [
+            $snapshot,
+            $directory,
+            hash_final($hash),
+            $this->identity($snapshotStat),
+        ];
+    }
+
+    /** @param array<int|string,mixed> $left @param array<int|string,mixed> $right */
+    private function sameIdentity(array $left, array $right): bool
+    {
+        foreach (['dev', 'ino', 'mode', 'size', 'mtime', 'ctime'] as $field) {
+            if ((int) ($left[$field] ?? -1) !== (int) ($right[$field] ?? -2)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** @param array<int|string,mixed> $stat @return array<string,int> */
+    private function identity(array $stat): array
+    {
+        return [
+            'dev' => (int) ($stat['dev'] ?? -1),
+            'ino' => (int) ($stat['ino'] ?? -1),
+            'mode' => (int) ($stat['mode'] ?? -1),
+            'size' => (int) ($stat['size'] ?? -1),
+        ];
     }
 
     private function validatePath(string $name, ValidationResult $result): ?string

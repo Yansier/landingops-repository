@@ -37,6 +37,18 @@ final class RevisionLedger
     {
         $this->locked(function (stdClass $state) use ($revision, $releaseId): array {
             $this->assertAllocated($state, $revision);
+            $status = $state->allocations->{(string) $revision};
+            if ($status === 'failed') {
+                throw new LandingOpsException('failed revision 不能恢复为 active。');
+            }
+            $previous = $state->active_revision;
+            if (is_int($previous)
+                && $previous !== $revision
+                && property_exists($state->allocations, (string) $previous)
+                && $state->allocations->{(string) $previous} === 'active'
+            ) {
+                $state->allocations->{(string) $previous} = 'superseded';
+            }
             $state->allocations->{(string) $revision} = 'active';
             $state->active_revision = $revision;
             $state->active_release_id = $releaseId;
@@ -48,7 +60,7 @@ final class RevisionLedger
     {
         $this->locked(function (stdClass $state) use ($revision): array {
             $this->assertAllocated($state, $revision);
-            if ($state->allocations->{(string) $revision} !== 'active') {
+            if (!in_array($state->allocations->{(string) $revision}, ['active', 'superseded'], true)) {
                 $state->allocations->{(string) $revision} = 'failed';
             }
             return [$state, null];

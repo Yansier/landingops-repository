@@ -13,6 +13,7 @@ final class BuildResult
         public readonly string $contentHash,
         public readonly string $publicHash,
         public readonly string $publicConfigAsset,
+        public readonly string $publicBaseUrl,
     ) {
     }
 
@@ -26,6 +27,7 @@ final class BuildResult
             'content_hash' => $this->contentHash,
             'public_hash' => $this->publicHash,
             'public_config_asset' => $this->publicConfigAsset,
+            'public_base_url' => $this->publicBaseUrl,
         ];
     }
 }

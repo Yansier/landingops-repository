@@ -13,6 +13,7 @@
       "uniqueItems": true,
       "items": {
         "type": "string",
+        "x-landingops-visibility": "public",
         "pattern": "^[A-Za-z0-9_-]{1,64}$"
       }
     },
@@ -22,9 +23,9 @@
       "additionalProperties": false,
       "required": ["download", "add_to_cart", "purchase"],
       "properties": {
-        "download": {"$ref": "#/$defs/toggle"},
-        "add_to_cart": {"$ref": "#/$defs/moneyEvent"},
-        "purchase": {"$ref": "#/$defs/moneyEvent"}
+        "download": {"$ref": "#/$defs/toggle", "x-landingops-visibility": "public"},
+        "add_to_cart": {"$ref": "#/$defs/moneyEvent", "x-landingops-visibility": "public"},
+        "purchase": {"$ref": "#/$defs/moneyEvent", "x-landingops-visibility": "public"}
       }
     },
     "links": {
@@ -33,8 +34,8 @@
       "additionalProperties": false,
       "required": ["download_url", "redirect_url"],
       "properties": {
-        "download_url": {"$ref": "#/$defs/nullableHttpsUrl"},
-        "redirect_url": {"$ref": "#/$defs/nullableHttpsUrl"}
+        "download_url": {"$ref": "#/$defs/nullableHttpsUrl", "x-landingops-visibility": "public"},
+        "redirect_url": {"$ref": "#/$defs/nullableHttpsUrl", "x-landingops-visibility": "public"}
       }
     },
     "custom": {
@@ -59,26 +60,29 @@
   "$defs": {
     "toggle": {
       "type": "object",
+      "x-landingops-visibility": "public",
       "additionalProperties": false,
       "required": ["enabled"],
       "properties": {
-        "enabled": {"type": "boolean"}
+        "enabled": {"type": "boolean", "x-landingops-visibility": "public"}
       }
     },
     "moneyEvent": {
       "type": "object",
+      "x-landingops-visibility": "public",
       "additionalProperties": false,
       "required": ["enabled", "value", "currency"],
       "properties": {
-        "enabled": {"type": "boolean"},
-        "value": {"type": "number", "minimum": 0},
-        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+        "enabled": {"type": "boolean", "x-landingops-visibility": "public"},
+        "value": {"type": "number", "minimum": 0, "x-landingops-visibility": "public"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$", "x-landingops-visibility": "public"}
       }
     },
     "nullableHttpsUrl": {
+      "x-landingops-visibility": "public",
       "oneOf": [
-        {"type": "null"},
-        {"type": "string", "format": "uri", "pattern": "^https://"}
+        {"type": "null", "x-landingops-visibility": "public"},
+        {"type": "string", "format": "uri", "pattern": "^https://", "x-landingops-visibility": "public"}
       ]
     }
   }
