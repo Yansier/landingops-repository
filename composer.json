@@ -1,11 +1,13 @@
 {
   "name": "yansier/landingops",
-  "description": "LandingOps Template Standard v1.0 offline validator and instance builder",
+  "description": "LandingOps offline template tooling and PHP control plane",
   "type": "project",
   "license": "proprietary",
   "require": {
     "php": ">=8.1 <9.0",
     "ext-json": "*",
+    "ext-pdo": "*",
+    "ext-pdo_mysql": "*",
     "ext-zip": "*"
   },
   "autoload": {
@@ -14,7 +16,8 @@
     }
   },
   "scripts": {
-    "test": "@php tests/run.php"
+    "test": "@php tests/run.php",
+    "test:mysql": "@php tests/mysql-integration.php"
   },
   "config": {
     "sort-packages": true

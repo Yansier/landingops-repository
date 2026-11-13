@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-本文固定 Phase 1B 的资源、授权、并发和错误语义，不包含 PHP 实现，也不是第三方宝塔/Cloudflare 端点声明。第三方调用只能由后端适配器执行。
+本文固定 V1 的资源、授权、并发和错误语义，也标明 Phase 1C 已实现的 PHP 控制面子集。它不是第三方宝塔/Cloudflare 端点声明；第三方调用只能由后端适配器执行，Phase 1C 不执行任何第三方调用。
 
 建议前缀 `/api/v1`，JSON 使用 UTF-8、`snake_case`；时间为 UTC RFC 3339；资源 ID 为不可枚举 UUID/ULID。生产只允许 HTTPS。
 
@@ -10,7 +10,7 @@
 
 ### 2.1 认证与授权
 
-- 管理端通过安全 Cookie 会话或 Phase 1B 明确选择的等价机制认证；若使用 Cookie，所有写操作具备 CSRF 防护。
+- Phase 1C 管理端使用服务端 Cookie Session；Cookie 为 `Secure + HttpOnly + SameSite=Strict`，所有已登录写操作必须同时提交 `X-CSRF-Token`。
 - 每个端点在后端依次校验：身份状态、角色、团队范围、资源所有权/负责人、资源状态和操作权限。
 - Cloudflare Token、宝塔 API Key、后台密码哈希、供应商密钥永不进入响应。
 - 资源不存在与无权访问可统一返回 404，降低跨团队枚举风险；安全审计保留真实原因。
@@ -192,4 +192,20 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 - 接管/覆盖/删除未知宝塔站点或任意现有 DNS 的通用接口。
 - 模板截图、预览、缩略图生成或独立预览服务。
 - 审核规避、按检测人员身份分流或随机隐藏文件的接口。
+
+## 11. Phase 1C 实现状态
+
+以下路径均位于 `/api/v1`：
+
+| 方法与路径 | Phase 1C 状态 |
+| --- | --- |
+| `POST /login`、`POST /logout`、`GET /me` | 已实现；登录响应仅返回安全用户字段、CSRF Token 和过期时间 |
+| `PATCH /me/profile`、`POST /me/password` | 已实现；改密后撤销该用户全部 Session |
+| `GET/POST /teams` | 已实现；仅总管理员 |
+| `GET/POST /users`、`PATCH /users/{id}` | 已实现查询、创建和停用；团队管理员只能操作本团队员工 |
+| `GET /instances` | 已实现授权范围查询；不包含实例创建或部署 |
+| `POST /instances/{id}/owner-transfers` | 已实现服务层、授权、乐观锁、历史和审计契约 |
+| 模板、主域名、任务、宝塔设置业务端点 | 明确返回 `501 not_implemented`，不得返回伪成功 |
+
+Phase 1C 的列表端点暂不实现游标翻页；返回固定 `has_more=false`。该限制必须在数据量增长前于后续阶段补齐。模板授权和主域名授权已落在独立授权服务与仓储契约中，但本阶段不开放其业务 API。
 

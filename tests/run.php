@@ -12,11 +12,12 @@ $composerAutoload = $root . '/vendor/autoload.php';
 require is_file($composerAutoload) ? $composerAutoload : $root . '/src/autoload.php';
 require __DIR__ . '/TestHarness.php';
 require __DIR__ . '/FixtureFactory.php';
+require __DIR__ . '/MemoryControlPlaneRepository.php';
 
 use LandingOps\Tests\TestHarness;
 
 $tests = [];
-foreach (['TemplateValidatorTest.php', 'OfflineInstanceBuilderTest.php', 'ContractTest.php'] as $file) {
+foreach (['TemplateValidatorTest.php', 'OfflineInstanceBuilderTest.php', 'ContractTest.php', 'ControlPlaneTest.php'] as $file) {
     /** @var array<string,Closure> $suite */
     $suite = require __DIR__ . '/' . $file;
     $tests = array_merge($tests, $suite);

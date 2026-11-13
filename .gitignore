@@ -1,6 +1,8 @@
 /vendor/
 /.tools/
 /build/
+/.env
+/.env.local
 /.phpunit.cache/
 /.idea/
 /.vscode/

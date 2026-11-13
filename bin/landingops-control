@@ -1,0 +1,104 @@
+<?php
+
+declare(strict_types=1);
+
+use LandingOps\ControlPlane\Database\DatabaseConfig;
+use LandingOps\ControlPlane\Database\MigrationRunner;
+use LandingOps\ControlPlane\Database\PdoFactory;
+use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
+use LandingOps\ControlPlane\Service\BootstrapAdminService;
+
+$root = dirname(__DIR__);
+require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
+
+function controlUsage(int $code): never
+{
+    fwrite($code === 0 ? STDOUT : STDERR, <<<TXT
+LandingOps Phase 1C control-plane CLI
+
+Usage:
+  php bin/landingops-control migrate
+  php bin/landingops-control bootstrap-admin <email> <display-name>
+
+Database settings are read from LANDINGOPS_DB_DSN, LANDINGOPS_DB_USER and LANDINGOPS_DB_PASSWORD.
+The bootstrap password is always prompted and is never accepted as a command argument.
+TXT);
+    exit($code);
+}
+
+function readHidden(string $prompt): string
+{
+    if (PHP_OS_FAMILY === 'Windows') {
+        $script = '$p=Read-Host ' . escapeshellarg($prompt) . ' -AsSecureString;'
+            . '$b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($p);'
+            . 'try{[Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)}';
+        $pipes = [];
+        $process = proc_open(['powershell.exe', '-NoProfile', '-Command', $script], [
+            0 => ['file', 'php://stdin', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['file', 'php://stderr', 'w'],
+        ], $pipes);
+        if (!is_resource($process)) {
+            throw new RuntimeException('无法启动安全密码输入。');
+        }
+        $value = trim((string) stream_get_contents($pipes[1]));
+        fclose($pipes[1]);
+        if (proc_close($process) !== 0) {
+            throw new RuntimeException('安全密码输入失败。');
+        }
+        return $value;
+    }
+
+    fwrite(STDERR, $prompt . ': ');
+    shell_exec('stty -echo');
+    try {
+        $value = trim((string) fgets(STDIN));
+    } finally {
+        shell_exec('stty echo');
+        fwrite(STDERR, PHP_EOL);
+    }
+    return $value;
+}
+
+$command = $argv[1] ?? null;
+if ($command === null || in_array($command, ['help', '--help', '-h'], true)) {
+    controlUsage($command === null ? 1 : 0);
+}
+
+try {
+    $pdo = (new PdoFactory())->connect(DatabaseConfig::fromEnvironment());
+    $runner = new MigrationRunner();
+    if ($command === 'migrate') {
+        $applied = $runner->migrate($pdo, $root . '/database/migrations');
+        fwrite(STDOUT, json_encode(['applied' => $applied], JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) . PHP_EOL);
+        exit(0);
+    }
+    if ($command === 'bootstrap-admin') {
+        if (!isset($argv[2], $argv[3]) || isset($argv[4])) {
+            controlUsage(1);
+        }
+        $runner->migrate($pdo, $root . '/database/migrations');
+        $password = readHidden('Password');
+        $confirm = readHidden('Confirm password');
+        if (!hash_equals($password, $confirm)) {
+            throw new RuntimeException('两次密码输入不一致。');
+        }
+        $lock = (int) $pdo->query("SELECT GET_LOCK('landingops_bootstrap_admin', 30)")->fetchColumn();
+        if ($lock !== 1) {
+            throw new RuntimeException('无法取得总管理员初始化锁。');
+        }
+        try {
+            $service = new BootstrapAdminService(new PdoControlPlaneRepository($pdo));
+            $user = $service->createFirst($argv[2], $argv[3], $password);
+        } finally {
+            $pdo->query("SELECT RELEASE_LOCK('landingops_bootstrap_admin')");
+        }
+        unset($password, $confirm);
+        fwrite(STDOUT, json_encode(['created' => $user], JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+        exit(0);
+    }
+    controlUsage(1);
+} catch (Throwable $exception) {
+    fwrite(STDERR, 'ERROR: ' . $exception->getMessage() . PHP_EOL);
+    exit(1);
+}

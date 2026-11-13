@@ -224,3 +224,18 @@ erDiagram
 - V1 默认本地保留最近 10 个成功 release，且至少覆盖最近 30 天；只有同时超出数量与时间门槛、且不被 active/known-good/任务引用的 release 才可清理。数据库配置版本默认保留 180 天，具体值需按磁盘与合规要求确认。
 - 历史恢复执行“复制旧 payload → 新 revision → 新 release”，`restored_from_config_version_id` 指回来源；绝不复用旧 revision，也不会触发内容 hash 唯一冲突。
 
+## 13. Phase 1C 迁移实现
+
+`database/migrations/001_v1_control_plane.sql` 是首个可执行 MySQL 8 迁移，覆盖本文 V1 表：团队、用户、Session、模板/版本/授权、唯一宝塔配置、多个 Cloudflare Connection/Zone、主域名/授权、实例/负责人历史、配置版本/release、批次/任务/步骤、域名预留、备用页、供应商组件和审计。
+
+迁移器具备以下约束：
+
+- 只接受 PDO `mysql` 驱动，拒绝 SQLite 等替代驱动；所有 DDL 使用 `CREATE TABLE IF NOT EXISTS`。
+- `schema_migrations` 保存文件版本与 SHA-256；已应用文件内容变化会失败，重复执行会跳过。
+- 使用 MySQL `GET_LOCK` 串行化迁移。MySQL DDL 可能隐式提交，因此失败后依靠幂等 DDL 继续执行，而不是宣称整份迁移具有事务原子性。
+- `baota_config.singleton_key` 同时具有 `UNIQUE` 和 `CHECK(singleton_key=1)`，数据库层禁止第二条宝塔配置。
+- `config_versions(instance_id, content_hash)` 是普通索引而非唯一约束，恢复旧内容可分配新 revision。
+- `auth_sessions` 只保存 Cookie/CSRF Token 的 SHA-256 二进制摘要；数据库初始化脚本不含默认账号、明文密码、密码哈希或真实第三方凭据。
+
+真实 MySQL 的版本、DDL、外键、CHECK 和唯一约束必须通过 `tests/mysql-integration.php` 在专用、名称以 `_test` 结尾的数据库复核。无 MySQL 环境时只能执行 SQL 契约与服务层测试，不能声称已经验证 MySQL 兼容性。
+
