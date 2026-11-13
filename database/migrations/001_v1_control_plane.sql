@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS teams (
     updated_at DATETIME(6) NOT NULL,
     CONSTRAINT uq_teams_slug UNIQUE (slug),
     CONSTRAINT chk_teams_status CHECK (status IN ('active', 'disabled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS users (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS users (
         (role = 'super_admin' AND team_id IS NULL) OR
         (role IN ('team_admin', 'staff') AND team_id IS NOT NULL)
     )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id),
     INDEX idx_auth_sessions_user_active (user_id, revoked_at, expires_at),
     INDEX idx_auth_sessions_expiry (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS templates (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS templates (
     CONSTRAINT fk_templates_team FOREIGN KEY (owner_team_id) REFERENCES teams(id),
     CONSTRAINT fk_templates_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_templates_status CHECK (status IN ('draft', 'active', 'disabled', 'archived'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS template_versions (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS template_versions (
     CONSTRAINT fk_template_versions_template FOREIGN KEY (template_id) REFERENCES templates(id),
     CONSTRAINT fk_template_versions_uploader FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_template_versions_validation CHECK (validation_status IN ('pending', 'valid', 'invalid'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS template_grants (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS template_grants (
     CONSTRAINT fk_template_grants_granter FOREIGN KEY (granted_by_user_id) REFERENCES users(id),
     CONSTRAINT fk_template_grants_revoker FOREIGN KEY (revoked_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_template_grants_status CHECK (status IN ('active', 'revoked'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS baota_config (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS baota_config (
     CONSTRAINT fk_baota_config_updater FOREIGN KEY (updated_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_baota_config_singleton CHECK (singleton_key = 1),
     CONSTRAINT chk_baota_config_status CHECK (status IN ('active', 'disabled', 'unverified'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS cloudflare_connections (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS cloudflare_connections (
     CONSTRAINT uq_cloudflare_connections_label UNIQUE (label),
     CONSTRAINT fk_cloudflare_connections_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_cloudflare_connections_status CHECK (status IN ('active', 'disabled', 'unverified'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS cloudflare_zones (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS cloudflare_zones (
     CONSTRAINT uq_cloudflare_zones_name UNIQUE (normalized_zone_name),
     CONSTRAINT fk_cloudflare_zones_connection FOREIGN KEY (connection_id) REFERENCES cloudflare_connections(id),
     CONSTRAINT chk_cloudflare_zones_status CHECK (status IN ('active', 'disabled', 'unverified'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS primary_domains (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS primary_domains (
     CONSTRAINT fk_primary_domains_zone FOREIGN KEY (zone_id) REFERENCES cloudflare_zones(id),
     CONSTRAINT fk_primary_domains_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_primary_domains_status CHECK (status IN ('active', 'disabled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS domain_grants (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS domain_grants (
     CONSTRAINT fk_domain_grants_team FOREIGN KEY (team_id) REFERENCES teams(id),
     CONSTRAINT fk_domain_grants_granter FOREIGN KEY (granted_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_domain_grants_status CHECK (status IN ('active', 'revoked'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS backup_page_assets (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS backup_page_assets (
     CONSTRAINT uq_backup_page_assets_hash UNIQUE (sha256),
     CONSTRAINT fk_backup_page_assets_uploader FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_backup_page_assets_status CHECK (status IN ('active', 'disabled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS vendor_component_versions (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS vendor_component_versions (
     CONSTRAINT uq_vendor_component_hash UNIQUE (sha256),
     CONSTRAINT fk_vendor_component_uploader FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_vendor_component_status CHECK (status IN ('active', 'disabled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS instances (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS instances (
     CONSTRAINT fk_instances_backup FOREIGN KEY (backup_page_asset_id) REFERENCES backup_page_assets(id),
     CONSTRAINT fk_instances_vendor FOREIGN KEY (vendor_component_version_id) REFERENCES vendor_component_versions(id),
     CONSTRAINT chk_instances_status CHECK (status IN ('draft', 'reserved', 'deploying', 'active', 'degraded', 'failed', 'disabled', 'archived'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS instance_owner_history (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -269,7 +269,7 @@ CREATE TABLE IF NOT EXISTS instance_owner_history (
     CONSTRAINT fk_instance_owner_history_to FOREIGN KEY (to_user_id) REFERENCES users(id),
     CONSTRAINT fk_instance_owner_history_actor FOREIGN KEY (changed_by_user_id) REFERENCES users(id),
     INDEX idx_instance_owner_history_instance (instance_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS config_versions (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -294,7 +294,7 @@ CREATE TABLE IF NOT EXISTS config_versions (
     CONSTRAINT chk_config_versions_status CHECK (status IN ('pending', 'applied', 'conflict', 'failed')),
     INDEX idx_config_versions_content_hash (instance_id, content_hash),
     INDEX idx_config_versions_public_hash (instance_id, public_hash)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS site_releases (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -311,16 +311,19 @@ CREATE TABLE IF NOT EXISTS site_releases (
     health_checked_at DATETIME(6) NULL,
     failure_summary VARCHAR(1000) NULL,
     created_at DATETIME(6) NOT NULL,
-    active_instance_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin
-        GENERATED ALWAYS AS (CASE WHEN status = 'active' THEN instance_id ELSE NULL END) STORED,
+    active_instance_id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin NULL,
     CONSTRAINT uq_site_releases_no UNIQUE (instance_id, release_no),
     CONSTRAINT uq_site_releases_path UNIQUE (instance_id, release_path_key),
     CONSTRAINT uq_site_releases_one_active UNIQUE (active_instance_id),
     CONSTRAINT fk_site_releases_instance FOREIGN KEY (instance_id) REFERENCES instances(id),
     CONSTRAINT fk_site_releases_config FOREIGN KEY (config_version_id) REFERENCES config_versions(id),
     CONSTRAINT fk_site_releases_previous FOREIGN KEY (previous_release_id) REFERENCES site_releases(id),
-    CONSTRAINT chk_site_releases_status CHECK (status IN ('staged', 'active', 'known_good', 'failed', 'retained', 'purged'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+    CONSTRAINT chk_site_releases_status CHECK (status IN ('staged', 'active', 'known_good', 'failed', 'retained', 'purged')),
+    CONSTRAINT chk_site_releases_active_key CHECK (
+        (status = 'active' AND active_instance_id = instance_id) OR
+        (status <> 'active' AND active_instance_id IS NULL)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS deployment_batches (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -335,7 +338,7 @@ CREATE TABLE IF NOT EXISTS deployment_batches (
     CONSTRAINT fk_deployment_batches_team FOREIGN KEY (team_id) REFERENCES teams(id),
     CONSTRAINT fk_deployment_batches_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id),
     CONSTRAINT chk_deployment_batches_status CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'partial', 'cancelled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS deployment_jobs (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -366,7 +369,7 @@ CREATE TABLE IF NOT EXISTS deployment_jobs (
     CONSTRAINT chk_deployment_jobs_status CHECK (status IN ('queued', 'running', 'retry_wait', 'needs_attention', 'compensating', 'cancelled', 'partial', 'succeeded', 'failed')),
     INDEX idx_deployment_jobs_claim (status, next_run_at, priority),
     INDEX idx_deployment_jobs_lease (lease_expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS job_steps (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -390,7 +393,7 @@ CREATE TABLE IF NOT EXISTS job_steps (
     CONSTRAINT uq_job_steps_idempotency UNIQUE (idempotency_key),
     CONSTRAINT fk_job_steps_job FOREIGN KEY (job_id) REFERENCES deployment_jobs(id),
     CONSTRAINT chk_job_steps_status CHECK (status IN ('pending', 'running', 'succeeded', 'retry_wait', 'needs_attention', 'compensating', 'compensated', 'failed', 'cancelled'))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS domain_reservations (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -401,14 +404,17 @@ CREATE TABLE IF NOT EXISTS domain_reservations (
     lease_expires_at DATETIME(6) NOT NULL,
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
-    active_fqdn VARCHAR(253)
-        GENERATED ALWAYS AS (CASE WHEN status IN ('held', 'committed') THEN normalized_fqdn ELSE NULL END) STORED,
+    active_fqdn VARCHAR(253) NULL,
     CONSTRAINT uq_domain_reservations_active UNIQUE (active_fqdn),
     CONSTRAINT fk_domain_reservations_instance FOREIGN KEY (instance_id) REFERENCES instances(id),
     CONSTRAINT fk_domain_reservations_job FOREIGN KEY (job_id) REFERENCES deployment_jobs(id),
     CONSTRAINT chk_domain_reservations_status CHECK (status IN ('held', 'committed', 'released', 'expired')),
+    CONSTRAINT chk_domain_reservations_active_key CHECK (
+        (status IN ('held', 'committed') AND active_fqdn = normalized_fqdn) OR
+        (status IN ('released', 'expired') AND active_fqdn IS NULL)
+    ),
     INDEX idx_domain_reservations_lease (status, lease_expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id CHAR(26) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
@@ -432,4 +438,4 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     INDEX idx_audit_logs_resource (resource_type, resource_id, created_at),
     INDEX idx_audit_logs_actor (actor_user_id, created_at),
     INDEX idx_audit_logs_job (job_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

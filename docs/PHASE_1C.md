@@ -4,7 +4,7 @@
 
 Phase 1C 在既有 Phase 1B 离线模板工具旁新增管理控制面基础：
 
-- 仅面向 MySQL 8 的版本化迁移；
+- 面向 MySQL 8，并经 Phase 1C.1 验证兼容 MariaDB 10.6+ 的版本化迁移；
 - PDO 仓储、JSON REST API、统一响应/错误与 Request ID；
 - `super_admin`、`team_admin`、`staff` 三级身份与集中式资源授权；
 - 服务端 Cookie Session、密码哈希、CSRF、账号停用和 Session 撤销；
@@ -16,7 +16,7 @@ Phase 1C 在既有 Phase 1B 离线模板工具旁新增管理控制面基础：
 ## 2. 运行要求与环境变量
 
 - PHP `8.1+`，扩展 `json`、`pdo`、`pdo_mysql`、`zip`；
-- MySQL `8.x`，实际版本由集成测试输出确认；
+- MySQL `8.x` 或 MariaDB `10.6+`；当前宝塔实测为 MariaDB `10.11.10-MariaDB-log`；
 - Composer 2。
 
 复制 `.env.example` 仅用于了解变量名。应用不会自动加载 `.env`，应由进程管理器或当前终端注入：
@@ -46,6 +46,7 @@ php bin/landingops-control bootstrap-admin admin@example.com "Platform Admin"
 - 员工：实例查询自动限定为“本团队且当前负责人为本人”。客户端提交的团队、角色或资源 ID 不能扩大范围。
 - 实例创建人字段不可由转交修改；只有总管理员或实例所属团队管理员可转交，目标必须是同团队启用的团队管理员/员工。
 - 模板版本与主域名授权检查位于 `AuthorizationService` / `ResourceAccessService`，Controller 不自行拼装权限规则。
+- 模板归属、上传者和 grant 均由仓储读取。团队管理员上传后首次建立本团队默认 grant；总管理员撤销后，模板所有权不能恢复或绕过授权，只有总管理员可再次授权。撤销只影响新实例选用，不影响已部署实例。
 - 原生 PHP 页面后台密码与 Session 不属于 LandingOps 身份体系，也不存入本控制面用户表。
 
 跨团队资源在多数读取/管理场景返回 404，减少 ID 枚举；真正拒绝原因只进入安全审计。停用用户会撤销全部 Session，且每次认证还会重新读取用户状态，因此遗留 Cookie 不能继续使用。
@@ -69,7 +70,7 @@ php bin/landingops-control bootstrap-admin admin@example.com "Platform Admin"
 composer test
 ```
 
-真实 MySQL 集成测试只可指向专用数据库，且数据库名必须以 `_test` 结尾：
+真实 MySQL 集成测试只可指向专用数据库 `landingops_test`：
 
 ```powershell
 $env:LANDINGOPS_TEST_MYSQL_DSN = 'mysql:host=127.0.0.1;port=3306;dbname=landingops_test;charset=utf8mb4'
@@ -78,7 +79,26 @@ $env:LANDINGOPS_TEST_MYSQL_PASSWORD = '<runtime-secret>'
 composer test:mysql
 ```
 
-该脚本执行迁移两次、读取真实版本，并在事务内验证重复规范化邮箱及第二条宝塔配置均被唯一约束拒绝；测试数据回滚。未提供变量时明确输出 `SKIP`。内存仓储仅用于权限与服务契约测试，不模拟 MySQL，也不能代替真实 MySQL 验证。
+Phase 1C.1 将数据库名严格限制为 `landingops_test`，连接后通过 `SELECT DATABASE()` 二次确认，并检查 `SHOW GRANTS FOR CURRENT_USER()`：除全局 `USAGE` 外，只接受 `landingops_test.*` 权限。写入测试夹具前还会确认 22 张业务表均为空；发现其他库显式权限或已有业务数据立即停止。远程主机还必须显式设置 `LANDINGOPS_TEST_MYSQL_ALLOW_REMOTE=I_UNDERSTAND`；推荐始终通过本机 SSH 隧道连接 `127.0.0.1`，不开放公网 3306。脚本验证 22 张业务表、重复迁移、失败迁移恢复、FK/CHECK/UNIQUE、真实 PDO Session、负责人事务/乐观锁、模板撤销/再次授权及单宝塔约束。测试数据使用事务回滚；故障注入表和迁移记录在 `finally` 中清理。
+
+Windows 项目本地 PHP 与 SSH 隧道流程：
+
+```powershell
+# 可选：让当前 PowerShell 会话中的 php 指向项目隔离版本，并检查扩展
+. .\scripts\Enter-ProjectPhp.ps1
+
+# 窗口 1；只把本机 13306 转发到服务器回环地址 3306
+.\scripts\Open-MySqlTestTunnel.ps1 -SshHost '<host>' -SshUser '<user>' -IdentityFile '<private-key>'
+
+# 窗口 2；密码以 SecureString 交互输入，不写文件或命令行
+.\scripts\Invoke-MySqlIntegration.ps1 -DatabaseUser '<landingops_test-user>'
+
+# 无稳定终端窗口时，可改用 Windows 原生凭据弹窗
+.\scripts\Open-MySqlTestTunnelSecure.ps1 -SshHost '<host>' -SshUser '<user>'
+.\scripts\Invoke-MySqlIntegrationSecure.ps1
+```
+
+项目私有 PHP 配置位于被 Git 忽略的 `.tools/php/php.ini`。数据库密码不写入 `.env`、代码或日志；测试脚本结束后清除临时环境变量。内存仓储只用于服务契约测试，不模拟 MySQL，也不能代替真实 MySQL 验证。
 
 推荐的完整检查：
 
@@ -91,9 +111,22 @@ php bin/landingops-control --help
 
 另需对 `src/`、`bin/`、`public/` 和 `tests/` 下所有 PHP 文件执行 `php -l`。
 
-## 7. 当前遗留边界
+## 7. Phase 1C.1 真实数据库验收结果
 
-- 当前开发环境若没有 MySQL 服务或 `pdo_mysql`，真实迁移、外键、CHECK 与并发行为保持未验证状态，不能用 SQLite 结论替代。
-- 列表 API 暂返回非分页结果；游标分页、限流、登录失败审计增强和会话清理任务留待后续阶段。
+2026-11-13 通过 SSH 隧道 `127.0.0.1:13306 → SSH → 127.0.0.1:3306` 完成测试，SSH ED25519 指纹在认证前与操作者提供的完整 SHA-256 指纹一致。未开放公网 3306，也未修改防火墙、MySQL 监听、宝塔站点、DNS 或其他数据库。
+
+- 实际引擎：MariaDB `10.11.10-MariaDB-log`。
+- 当前数据库：`landingops_test`；使用仅授权该测试库的专用账号，实际账号标识只保留在被 Git 忽略的本地测试日志中。
+- `SHOW GRANTS` 检查通过：除全局 `USAGE` 外仅有 `landingops_test.*` 权限。
+- 首次发现 `utf8mb4_0900_ai_ci` 为 Oracle MySQL 8 专属，MariaDB 返回 1273；迁移改为双方支持的 `utf8mb4_unicode_ci`。
+- 随后发现 MariaDB 不接受字符串状态生成列，返回 1901；`active_instance_id` / `active_fqdn` 改为显式可空键，并以 `CHECK + UNIQUE` 保持相同约束。
+- 最终通过：22 张业务表、迁移重复执行、故障注入后的安全恢复、FK/CHECK/UNIQUE、真实 PDO 登录/Session/CSRF/登出、模板授权撤销与再次授权、负责人事务与乐观锁、单宝塔配置唯一约束。
+- 测试业务数据已回滚，故障注入表和临时迁移记录已清理；测试库保留正式 schema 与 `schema_migrations` 记录。SSH 隧道在测试后关闭。
+
+## 8. 当前遗留边界
+
+- 2026-11-13 本地已配置项目隔离 PHP `8.5.12`，并实测加载 `json`、`PDO`、`pdo_mysql`、`zip`、`openssl`、`mbstring`；系统 PATH 仍不做全局修改。
+- Oracle MySQL 8 仍是正式目标之一，但本轮真实环境为 MariaDB 10.11.10；后续生产上线前仍应在最终选定引擎版本上重复执行同一套验收。
+- 列表 API 暂返回非分页结果；游标分页、限流和会话清理任务留待后续阶段。
 - 模板、域名、实例创建、部署任务等 V1 表已预留，但 Phase 1C 不开放其业务写 API。
 - 数据库中的第三方凭据字段只定义密文容器；密钥管理和真实适配器未实现，也未写入任何真实凭据。

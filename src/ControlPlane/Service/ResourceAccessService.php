@@ -23,12 +23,13 @@ final class ResourceAccessService
         return $this->repository->listInstances($scope['team_id'], $scope['owner_user_id']);
     }
 
-    public function assertTemplateVersion(Principal $actor, string $teamId, string $versionId, ?string $ownerTeamId): void
+    public function assertTemplateVersion(Principal $actor, string $teamId, string $versionId): void
     {
+        $version = $this->repository->findTemplateVersionAuthorization($versionId);
         $this->authorization->assertTemplateGrant(
             $actor,
             $teamId,
-            $ownerTeamId,
+            $version !== null,
             $this->repository->hasTemplateGrant($versionId, $teamId),
         );
     }

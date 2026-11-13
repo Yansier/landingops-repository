@@ -18,6 +18,7 @@ use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\BootstrapAdminService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
+use LandingOps\ControlPlane\Service\TemplateGrantService;
 
 const SUPER_ID = '01AAAAAAAAAAAAAAAAAAAAAAAA';
 const ADMIN_A_ID = '01BBBBBBBBBBBBBBBBBBBBBBBB';
@@ -29,12 +30,27 @@ const TEAM_A_ID = '01GGGGGGGGGGGGGGGGGGGGGGGG';
 const TEAM_B_ID = '01HHHHHHHHHHHHHHHHHHHHHHHH';
 const INSTANCE_A_ID = '01JJJJJJJJJJJJJJJJJJJJJJJJ';
 const INSTANCE_B_ID = '01KKKKKKKKKKKKKKKKKKKKKKKK';
+const TEMPLATE_A_VERSION_ID = '01MMMMMMMMMMMMMMMMMMMMMMMM';
 
 /** @return array{0:MemoryControlPlaneRepository,1:array<string,Principal>} */
 function controlFixture(): array
 {
     $repository = new MemoryControlPlaneRepository();
     $hasher = new PasswordHasher();
+    foreach ([
+        [TEAM_A_ID, 'Team A', 'team-a'],
+        [TEAM_B_ID, 'Team B', 'team-b'],
+    ] as [$id, $name, $slug]) {
+        $repository->insertTeam([
+            'id' => $id,
+            'name' => $name,
+            'slug' => $slug,
+            'status' => 'active',
+            'version' => 1,
+            'created_at' => '2026-01-01 00:00:00.000000',
+            'updated_at' => '2026-01-01 00:00:00.000000',
+        ]);
+    }
     foreach ([
         [SUPER_ID, null, 'root@example.test', Role::SUPER_ADMIN],
         [ADMIN_A_ID, TEAM_A_ID, 'admin-a@example.test', Role::TEAM_ADMIN],
@@ -64,6 +80,7 @@ function controlFixture(): array
             'created_by_user_id' => STAFF_A_ID,
             'current_owner_user_id' => STAFF_A_ID,
             'version' => 1,
+            'template_version_id' => TEMPLATE_A_VERSION_ID,
         ],
         INSTANCE_B_ID => [
             'id' => INSTANCE_B_ID,
@@ -72,6 +89,14 @@ function controlFixture(): array
             'current_owner_user_id' => STAFF_B_ID,
             'version' => 1,
         ],
+    ];
+    $repository->templateVersions[TEMPLATE_A_VERSION_ID] = [
+        'id' => TEMPLATE_A_VERSION_ID,
+        'template_id' => '01NNNNNNNNNNNNNNNNNNNNNNNN',
+        'owner_team_id' => TEAM_A_ID,
+        'uploaded_by_user_id' => ADMIN_A_ID,
+        'validation_status' => 'valid',
+        'template_status' => 'active',
     ];
     $principals = [];
     foreach ($repository->users as $id => $user) {
@@ -221,15 +246,61 @@ return [
         );
     },
 
-    'template and domain grants remain centralized' => static function (): void {
+    'template grant revoke cannot be bypassed by ownership and can be restored only by super admin' => static function (): void {
         [$repository, $p] = controlFixture();
         $access = new ResourceAccessService($repository, new AuthorizationService());
+        $grants = new TemplateGrantService($repository, new AuthorizationService());
+
+        $access->assertTemplateVersion($p[SUPER_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID);
         TestHarness::assertThrows(
-            static fn () => $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, 'version-1', TEAM_B_ID),
+            static fn () => $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID),
             ApiException::class,
         );
-        $repository->templateGrants['version-1:' . TEAM_A_ID] = true;
-        $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, 'version-1', TEAM_B_ID);
+        TestHarness::assertThrows(
+            static fn () => $grants->grantUploaderTeam($p[ADMIN_B_ID], TEMPLATE_A_VERSION_ID, 'request-false-owner'),
+            ApiException::class,
+        );
+        $grants->grantUploaderTeam($p[ADMIN_A_ID], TEMPLATE_A_VERSION_ID, 'request-grant-default');
+        $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID);
+        $access->assertTemplateVersion($p[STAFF_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID);
+
+        TestHarness::assertThrows(
+            static fn () => $access->assertTemplateVersion($p[ADMIN_B_ID], TEAM_B_ID, TEMPLATE_A_VERSION_ID),
+            ApiException::class,
+        );
+        $grants->revokeBySuperAdmin($p[SUPER_ID], TEMPLATE_A_VERSION_ID, TEAM_A_ID, 'request-grant-revoke');
+        TestHarness::assertThrows(
+            static fn () => $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID),
+            ApiException::class,
+        );
+        TestHarness::assertThrows(
+            static fn () => $access->assertTemplateVersion($p[STAFF_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID),
+            ApiException::class,
+        );
+        $access->assertTemplateVersion($p[SUPER_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID);
+        $exception = TestHarness::assertThrows(
+            static fn () => $grants->grantUploaderTeam($p[ADMIN_A_ID], TEMPLATE_A_VERSION_ID, 'request-owner-bypass'),
+            ApiException::class,
+        );
+        TestHarness::assertSame('template_grant_revoked', $exception->errorCode);
+
+        // 撤销只阻止新实例选用模板，不改变已部署实例或其负责人访问范围。
+        TestHarness::assertSame(INSTANCE_A_ID, $access->listInstances($p[ADMIN_A_ID])[0]['id']);
+
+        $grants->grantBySuperAdmin($p[SUPER_ID], TEMPLATE_A_VERSION_ID, TEAM_A_ID, 'request-grant-restore');
+        $access->assertTemplateVersion($p[ADMIN_A_ID], TEAM_A_ID, TEMPLATE_A_VERSION_ID);
+        $grants->grantBySuperAdmin($p[SUPER_ID], TEMPLATE_A_VERSION_ID, TEAM_B_ID, 'request-grant-cross-team');
+        $access->assertTemplateVersion($p[ADMIN_B_ID], TEAM_B_ID, TEMPLATE_A_VERSION_ID);
+
+        TestHarness::assertThrows(
+            static fn () => $access->assertTemplateVersion($p[SUPER_ID], TEAM_A_ID, '01PPPPPPPPPPPPPPPPPPPPPPPP'),
+            ApiException::class,
+        );
+    },
+
+    'domain grants remain centralized' => static function (): void {
+        [$repository, $p] = controlFixture();
+        $access = new ResourceAccessService($repository, new AuthorizationService());
         TestHarness::assertThrows(
             static fn () => $access->assertPrimaryDomain($p[ADMIN_A_ID], TEAM_A_ID, 'domain-1'),
             ApiException::class,
@@ -318,6 +389,10 @@ return [
         TestHarness::assertContains('CONSTRAINT chk_baota_config_singleton CHECK (singleton_key = 1)', $sql);
         TestHarness::assertContains('INDEX idx_config_versions_content_hash (instance_id, content_hash)', $sql);
         TestHarness::assertNotContains('UNIQUE KEY uq_config_versions_hash', $sql);
+        TestHarness::assertContains('COLLATE=utf8mb4_unicode_ci', $sql);
+        TestHarness::assertNotContains('utf8mb4_0900_ai_ci', $sql);
+        TestHarness::assertContains('CONSTRAINT chk_site_releases_active_key CHECK', $sql);
+        TestHarness::assertContains('CONSTRAINT chk_domain_reservations_active_key CHECK', $sql);
         TestHarness::assertNotContains('password123', strtolower($sql));
         TestHarness::assertTrue(count((new SqlStatementSplitter())->split($sql)) >= 20);
     },

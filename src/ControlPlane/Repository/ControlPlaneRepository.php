@@ -16,6 +16,8 @@ interface ControlPlaneRepository
     public function insertUser(array $user): void;
     /** @param array<string,mixed> $team */
     public function insertTeam(array $team): void;
+    /** @return array<string,mixed>|null */
+    public function findTeamById(string $id): ?array;
     /** @return list<array<string,mixed>> */
     public function listTeams(): array;
     /** @return list<array<string,mixed>> */
@@ -37,7 +39,19 @@ interface ControlPlaneRepository
     public function updateInstanceOwner(string $instanceId, string $ownerId, int $expectedVersion, string $at): bool;
     /** @param array<string,mixed> $history */
     public function insertOwnerHistory(array $history): void;
+    /** @return array<string,mixed>|null */
+    public function findTemplateVersionAuthorization(string $templateVersionId): ?array;
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool;
+    /** @param array<string,mixed> $grant */
+    public function createTemplateGrant(array $grant): bool;
+    /** @param array<string,mixed> $grant */
+    public function grantTemplateVersion(array $grant): void;
+    public function revokeTemplateVersionGrant(
+        string $templateVersionId,
+        string $teamId,
+        string $actorUserId,
+        string $at,
+    ): bool;
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool;
     /** @param array<string,mixed> $audit */
     public function insertAudit(array $audit): void;

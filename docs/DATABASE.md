@@ -2,7 +2,7 @@
 
 ## 1. 设计约定
 
-- MySQL 8.x 为目标，具体版本待联调；字符集 `utf8mb4`，时间以 UTC 存储。
+- MySQL 8.x 为原目标；Phase 1C.1 已在宝塔实际 MariaDB 10.11.10 上联调，因此迁移兼容 MySQL 8 与 MariaDB 10.6+。字符集使用 `utf8mb4`、排序规则使用双方均支持的 `utf8mb4_unicode_ci`，时间以 UTC 存储。
 - 主键建议使用 UUIDv7/ULID 的二进制或定长表示；示意图统一写 `uuid`。
 - 业务软删除使用 `status/deleted_at`，高风险资源不做无审计硬删除。
 - JSON 只保存结构灵活但有 schema 的数据；身份、授权、状态与关联均使用关系字段和外键。
@@ -80,7 +80,8 @@ erDiagram
 `id`, `template_version_id`, `team_id`, `status(active|revoked)`, `granted_by_user_id`, `granted_at`, `revoked_by_user_id NULL`, `revoked_at NULL`。
 
 - `UNIQUE(template_version_id, team_id)`；使用状态表达撤销。
-- 撤销不级联实例。
+- 团队上传后的默认授权只能在 grant 首次不存在时创建；若总管理员已将其置为 `revoked`，上传团队或模板所有权不能把它自动恢复为 `active`。
+- 再次授权必须由总管理员显式执行，更新原唯一记录并清空撤销信息。撤销不级联修改 `instances`，已部署实例继续引用其不可变 `template_version_id`。
 
 ## 5. 单宝塔配置
 
@@ -140,7 +141,7 @@ erDiagram
 
 `id`, `normalized_fqdn`, `instance_id`, `job_id NULL`, `status(held|committed|released|expired)`, `lease_expires_at`, `created_at`, `updated_at`。
 
-- 活动预留需要并发唯一。MySQL 可用生成列 `active_fqdn`（仅 held/committed 返回 FQDN，否则 NULL）并 `UNIQUE(active_fqdn)`，或使用不物理删除的单行状态模型。
+- 活动预留需要并发唯一。兼容迁移使用显式可空 `active_fqdn`：held/committed 时必须等于 `normalized_fqdn`，released/expired 时必须为 NULL；`CHECK + UNIQUE(active_fqdn)` 共同约束，服务层在同一事务更新状态与该键。
 - `committed` 与活跃实例共存；任务只有确认安全后才能释放。
 
 ## 8. 配置版本
@@ -160,7 +161,7 @@ erDiagram
 `id`, `instance_id`, `config_version_id`, `release_no`, `release_path_key`, `manifest_hash`, `public_config_asset`, `public_hash`, `status(staged|active|known_good|failed|retained|purged)`, `previous_release_id NULL`, `activated_at NULL`, `health_checked_at NULL`, `failure_summary NULL`, `created_at`。
 
 - `UNIQUE(instance_id, release_no)`、`UNIQUE(instance_id, release_path_key)`；`public_config_asset` 必须是相对内容寻址路径。
-- 一个实例最多一个 `active` release，由生成列唯一索引或事务锁+服务层约束保证；`current` 指向与数据库状态不一致时先以本地 release manifest 核验并协调。
+- 一个实例最多一个 `active` release。为兼容 MySQL 8 与 MariaDB 10.11，迁移使用显式可空 `active_instance_id`，以 `CHECK` 强制 active 时等于 `instance_id`、非 active 时为 NULL，再由唯一索引保证；服务层必须在同一事务更新状态与该键。`current` 指向与数据库状态不一致时先以本地 release manifest 核验并协调。
 - release manifest 保存 HTML、公开 JS、私有 canonical 配置版本和文件哈希的对应关系，但不保存任何明文密钥。
 - 切换前失败的 staged release 可隔离/清理；切换后健康检查失败记录为 failed 并恢复上一 known-good 指针，active config revision 不推进。
 
@@ -226,7 +227,7 @@ erDiagram
 
 ## 13. Phase 1C 迁移实现
 
-`database/migrations/001_v1_control_plane.sql` 是首个可执行 MySQL 8 迁移，覆盖本文 V1 表：团队、用户、Session、模板/版本/授权、唯一宝塔配置、多个 Cloudflare Connection/Zone、主域名/授权、实例/负责人历史、配置版本/release、批次/任务/步骤、域名预留、备用页、供应商组件和审计。
+`database/migrations/001_v1_control_plane.sql` 是首个可执行 MySQL 8 / MariaDB 10.6+ 迁移，覆盖本文 V1 表：团队、用户、Session、模板/版本/授权、唯一宝塔配置、多个 Cloudflare Connection/Zone、主域名/授权、实例/负责人历史、配置版本/release、批次/任务/步骤、域名预留、备用页、供应商组件和审计。
 
 迁移器具备以下约束：
 

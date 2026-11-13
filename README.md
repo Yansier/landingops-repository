@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1C（数据库与三级权限系统）**。在保留 Phase 1B.2 离线工具的基础上，仓库已加入 MySQL 8 版本化迁移、PHP JSON API 控制面、Cookie Session + CSRF、`super_admin / team_admin / staff` 授权服务、安全初始化 CLI 与服务层测试。仍不包含 Vue 管理界面、生产发布 Worker 或真实宝塔/Cloudflare 调用。
+> 当前状态：**Phase 1C.1（权限修复与 MySQL 集成验收）**。在 Phase 1C 基础上，模板使用权已改为完全依赖服务端授权记录，所有权不能绕过撤销；仓库同时提供受限于 `landingops_test` 的 MySQL 验收套件和 SSH 隧道脚本。仍不包含 Vue 管理界面、生产发布 Worker 或真实宝塔/Cloudflare 调用。
 
 ## 最重要的边界
 
@@ -44,7 +44,7 @@ Phase 1B 实现时应将“备用页面版本”作为受审计的管理员资�
 
 ```text
 src/                   # Phase 1B 离线核心 + Phase 1C 控制面核心
-database/migrations/   # 只面向 MySQL 8 的版本化迁移
+database/migrations/   # MySQL 8 / MariaDB 10.6+ 版本化迁移
 public/index.php       # Phase 1C JSON API 前端控制器
 bin/landingops         # validate / package-sample / build CLI
 bin/landingops-control # migrate / bootstrap-admin CLI

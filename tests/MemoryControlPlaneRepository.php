@@ -25,7 +25,9 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
     public array $ownerHistory = [];
     /** @var list<array<string,mixed>> */
     public array $audits = [];
-    /** @var array<string,bool> */
+    /** @var array<string,array<string,mixed>> */
+    public array $templateVersions = [];
+    /** @var array<string,array<string,mixed>> */
     public array $templateGrants = [];
     /** @var array<string,bool> */
     public array $domainGrants = [];
@@ -39,6 +41,9 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
             $this->instances,
             $this->ownerHistory,
             $this->audits,
+            $this->templateVersions,
+            $this->templateGrants,
+            $this->domainGrants,
         ]);
         try {
             return $callback();
@@ -50,6 +55,9 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
                 $this->instances,
                 $this->ownerHistory,
                 $this->audits,
+                $this->templateVersions,
+                $this->templateGrants,
+                $this->domainGrants,
             ] = unserialize($snapshot, ['allowed_classes' => false]);
             throw $exception;
         }
@@ -93,6 +101,11 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
             }
         }
         $this->teams[(string) $team['id']] = $team;
+    }
+
+    public function findTeamById(string $id): ?array
+    {
+        return $this->teams[$id] ?? null;
     }
 
     public function listTeams(): array
@@ -204,9 +217,55 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
         $this->ownerHistory[] = $history;
     }
 
+    public function findTemplateVersionAuthorization(string $templateVersionId): ?array
+    {
+        return $this->templateVersions[$templateVersionId] ?? null;
+    }
+
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool
     {
-        return $this->templateGrants[$templateVersionId . ':' . $teamId] ?? false;
+        $grant = $this->templateGrants[$templateVersionId . ':' . $teamId] ?? null;
+        return is_array($grant) && ($grant['status'] ?? null) === 'active';
+    }
+
+    public function createTemplateGrant(array $grant): bool
+    {
+        $key = $grant['template_version_id'] . ':' . $grant['team_id'];
+        if (isset($this->templateGrants[$key])) {
+            return false;
+        }
+        $this->templateGrants[$key] = $grant + [
+            'status' => 'active',
+            'revoked_by_user_id' => null,
+            'revoked_at' => null,
+        ];
+        return true;
+    }
+
+    public function grantTemplateVersion(array $grant): void
+    {
+        $key = $grant['template_version_id'] . ':' . $grant['team_id'];
+        $this->templateGrants[$key] = $grant + [
+            'status' => 'active',
+            'revoked_by_user_id' => null,
+            'revoked_at' => null,
+        ];
+    }
+
+    public function revokeTemplateVersionGrant(
+        string $templateVersionId,
+        string $teamId,
+        string $actorUserId,
+        string $at,
+    ): bool {
+        $key = $templateVersionId . ':' . $teamId;
+        if (!isset($this->templateGrants[$key]) || $this->templateGrants[$key]['status'] !== 'active') {
+            return false;
+        }
+        $this->templateGrants[$key]['status'] = 'revoked';
+        $this->templateGrants[$key]['revoked_by_user_id'] = $actorUserId;
+        $this->templateGrants[$key]['revoked_at'] = $at;
+        return true;
     }
 
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool

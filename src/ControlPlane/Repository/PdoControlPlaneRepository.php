@@ -69,6 +69,11 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         );
     }
 
+    public function findTeamById(string $id): ?array
+    {
+        return $this->one('SELECT id, name, slug, status, version, created_at, updated_at FROM teams WHERE id = ?', [$id]);
+    }
+
     public function listTeams(): array
     {
         return $this->all('SELECT id, name, slug, status, version, created_at, updated_at FROM teams ORDER BY created_at, id');
@@ -198,12 +203,64 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         );
     }
 
+    public function findTemplateVersionAuthorization(string $templateVersionId): ?array
+    {
+        return $this->one(
+            'SELECT tv.id, tv.template_id, tv.uploaded_by_user_id, tv.validation_status, '
+            . 't.owner_team_id, t.status AS template_status '
+            . 'FROM template_versions tv JOIN templates t ON t.id = tv.template_id WHERE tv.id = ?',
+            [$templateVersionId],
+        );
+    }
+
     public function hasTemplateGrant(string $templateVersionId, string $teamId): bool
     {
         return $this->exists(
             "SELECT 1 FROM template_grants WHERE template_version_id = ? AND team_id = ? AND status = 'active'",
             [$templateVersionId, $teamId],
         );
+    }
+
+    public function createTemplateGrant(array $grant): bool
+    {
+        $statement = $this->execute(
+            'INSERT INTO template_grants(id, template_version_id, team_id, status, granted_by_user_id, granted_at, '
+            . 'revoked_by_user_id, revoked_at) VALUES (?,?,?,\'active\',?,?,NULL,NULL) '
+            . 'ON DUPLICATE KEY UPDATE id = id',
+            [
+                $grant['id'], $grant['template_version_id'], $grant['team_id'],
+                $grant['granted_by_user_id'], $grant['granted_at'],
+            ],
+        );
+        return $statement->rowCount() === 1;
+    }
+
+    public function grantTemplateVersion(array $grant): void
+    {
+        $this->execute(
+            'INSERT INTO template_grants(id, template_version_id, team_id, status, granted_by_user_id, granted_at, '
+            . 'revoked_by_user_id, revoked_at) VALUES (?,?,?,\'active\',?,?,NULL,NULL) '
+            . 'ON DUPLICATE KEY UPDATE status = \'active\', granted_by_user_id = VALUES(granted_by_user_id), '
+            . 'granted_at = VALUES(granted_at), revoked_by_user_id = NULL, revoked_at = NULL',
+            [
+                $grant['id'], $grant['template_version_id'], $grant['team_id'],
+                $grant['granted_by_user_id'], $grant['granted_at'],
+            ],
+        );
+    }
+
+    public function revokeTemplateVersionGrant(
+        string $templateVersionId,
+        string $teamId,
+        string $actorUserId,
+        string $at,
+    ): bool {
+        $statement = $this->execute(
+            "UPDATE template_grants SET status = 'revoked', revoked_by_user_id = ?, revoked_at = ? "
+            . "WHERE template_version_id = ? AND team_id = ? AND status = 'active'",
+            [$actorUserId, $at, $templateVersionId, $teamId],
+        );
+        return $statement->rowCount() === 1;
     }
 
     public function hasDomainGrant(string $primaryDomainId, string $teamId): bool

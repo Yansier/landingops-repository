@@ -20,7 +20,7 @@ final class MigrationRunner
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS schema_migrations ('
             . 'version VARCHAR(191) PRIMARY KEY, checksum CHAR(64) NOT NULL, applied_at DATETIME(6) NOT NULL'
-            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci',
+            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci',
         );
         $locked = (int) $pdo->query("SELECT GET_LOCK('landingops_schema_migrations', 30)")->fetchColumn();
         if ($locked !== 1) {

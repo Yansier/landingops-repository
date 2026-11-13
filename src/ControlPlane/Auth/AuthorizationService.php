@@ -96,14 +96,17 @@ final class AuthorizationService
     public function assertTemplateGrant(
         Principal $actor,
         string $teamId,
-        ?string $ownerTeamId,
+        bool $templateVersionExists,
         bool $hasActiveGrant,
     ): void {
         $this->assertActive($actor);
+        if (!$templateVersionExists) {
+            throw new ApiException(404, 'template_not_available', '模板版本不存在或未授权。');
+        }
         if ($actor->role === Role::SUPER_ADMIN) {
             return;
         }
-        if ($actor->teamId !== $teamId || ($ownerTeamId !== $teamId && !$hasActiveGrant)) {
+        if ($actor->teamId !== $teamId || !$hasActiveGrant) {
             throw new ApiException(404, 'template_not_available', '模板版本不存在或未授权。');
         }
     }
