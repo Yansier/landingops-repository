@@ -13,6 +13,7 @@ use LandingOps\Exception\PublicationInterruptedException;
 use LandingOps\Exception\ValidationException;
 use LandingOps\Filesystem\LocalFilesystem;
 use LandingOps\Template\TemplateValidator;
+use LandingOps\Template\ValidatedTemplate;
 use LandingOps\Validation\ValidationResult;
 use LandingOps\Zip\SafeExtractor;
 use LandingOps\Zip\ZipLimits;
@@ -42,10 +43,13 @@ final class OfflineInstanceBuilder
 
     public function recover(string $instanceRoot): void
     {
-        $this->initializeInstanceRoot($instanceRoot);
-        $ledger = new RevisionLedger($instanceRoot, $this->filesystem);
-        $pointer = new ReleasePointer($instanceRoot, $this->filesystem);
-        (new PublicationCoordinator($instanceRoot, $this->filesystem))->recover($ledger, $pointer);
+        $lock = new InstanceLock($instanceRoot, $this->filesystem);
+        $lock->synchronized(function () use ($instanceRoot): void {
+            $this->initializeInstanceRoot($instanceRoot);
+            $ledger = new RevisionLedger($instanceRoot, $this->filesystem);
+            $pointer = new ReleasePointer($instanceRoot, $this->filesystem);
+            (new PublicationCoordinator($instanceRoot, $this->filesystem))->recover($ledger, $pointer);
+        });
     }
 
     public function build(string $zipPath, stdClass $config, string $instanceRoot): BuildResult
@@ -61,6 +65,14 @@ final class OfflineInstanceBuilder
             throw new ValidationException('无法离线实例化需要供应商组件的模板。', $result);
         }
 
+        $lock = new InstanceLock($instanceRoot, $this->filesystem);
+        return $lock->synchronized(
+            fn (): BuildResult => $this->buildLocked($template, $config, $instanceRoot),
+        );
+    }
+
+    private function buildLocked(ValidatedTemplate $template, stdClass $config, string $instanceRoot): BuildResult
+    {
         $this->initializeInstanceRoot($instanceRoot);
         $ledger = new RevisionLedger($instanceRoot, $this->filesystem);
         $pointer = new ReleasePointer($instanceRoot, $this->filesystem);

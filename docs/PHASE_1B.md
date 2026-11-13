@@ -1,4 +1,4 @@
-# Phase 1B / 1B.1：离线模板验证、实例化与恢复
+# Phase 1B / 1B.1 / 1B.2：离线模板验证、实例化与恢复
 
 本阶段只实现 LTS v1.0 的离线能力，不连接宝塔、Cloudflare、DNS、SSL、MySQL 或生产站点。
 
@@ -92,6 +92,16 @@ build/offline-instance/
 
 `SchemaContractValidator` 负责拒绝不完整的公开声明；`ConfigProjector` 仍会按 schema 逐字段重建输出，防止调用方绕过验证时把 private 或未标记字段深拷贝到 JavaScript。
 
+## JSON Schema 循环引用
+
+循环检测独立于公开配置检查。`SchemaContractValidator` 会为根 `$defs` 中的所有定义建立完整引用图，并检查 properties、array items、`oneOf` 和嵌套 `$defs` 中出现的引用：
+
+- 直接自引用与任意长度的间接循环均以 `schema_ref_cycle` 拒绝。
+- 未被公开路径使用、未被根配置引用或标记为 `private` 的定义也必须无环，不能借可见性绕过。
+- 合法的有向无环引用链允许共享定义，不会被误判。
+
+`ConfigValidator` 另有运行时防线：沿当前验证路径记录 `$ref` 栈，重复进入同一引用时返回 `config_schema_cycle`；所有 schema/value 递归最多 128 层，超过时返回 `config_recursion_limit`。因此即使调用方绕过模板 Schema 校验，也不会因异常引用或极深输入无限递归。
+
 ## 稳定的 release 资源 URL
 
 实例化后的 HTML 不再依赖随 active release 变化的 `/assets/...`。所有本地 `src` 和 `href` 都改写为：
@@ -116,7 +126,20 @@ release ID 包含单调 revision 和公开配置哈希前缀。该 URL 映射到
 - release 已提交、指针尚未切换：向前完成指针切换及 ledger 激活。
 - 指针已切换、ledger 尚未完成：以不可变 release 和指针为准补齐 ledger。
 
-恢复后 `active_revision`、`active_release_id` 与 `current.release` 一致；任何已分配 revision 都不会回收或重复使用。测试通过三个显式故障注入点模拟进程中断。
+恢复会先汇总 current pointer、ledger active 状态以及所有遗留 journal 对应的完整 release，只选择 revision 最大的有效候选完成激活；较旧候选标记为 `superseded`，不能覆盖较新的有效版本。恢复后 `active_revision`、`active_release_id` 与 `current.release` 一致；任何已分配 revision 都不会回收或重复使用。测试通过三个显式故障注入点模拟进程中断。
+
+## 实例级发布锁
+
+每个实例按规范化绝对路径计算独立锁键，并在实例父目录创建 `.landingops-instance-<hash24>.lock`。`InstanceLock` 使用操作系统 `flock(LOCK_EX)`，覆盖以下完整临界区：
+
+- ownership marker 与实例目录初始化；
+- 遗留 journal 恢复；
+- revision 分配、staging 生成和不可变 release 提交；
+- `current.release` 切换、ledger 激活和 journal 清理。
+
+同一 PHP 进程对同一实例再次进入锁时复用已持有锁并记录嵌套深度，不会自锁；不同实例使用不同锁键，可以独立执行。ledger 的细粒度文件锁继续保留作为原子写保护，但所有 ledger 变更、journal 变更和指针激活都会断言实例锁已经持有。进程异常退出时，操作系统释放文件锁；锁文件可以保留并由后续恢复安全复用。
+
+自动化测试使用独立 PHP 子进程验证同实例构建与恢复会等待、不同实例不会互相阻塞、锁重入无死锁、崩溃退出后可恢复，以及多个遗留 journal 不导致版本回退。本阶段完整测试为 38 项。
 
 ## 安全行为
 
@@ -128,6 +151,7 @@ release ID 包含单调 revision 和公开配置哈希前缀。该 URL 映射到
 - 公开配置只来自 `public_paths`，且所有实际投影节点都必须显式标记 `x-landingops-visibility=public`。
 - 每次发布尝试先分配单调 revision；失败 revision 标记为 failed，后续不会复用。
 - release 一旦提交不原位修改；切换后旧 release 的 HTML 和版本化资源 URL 仍然可解析。
+- 同一实例的恢复、构建、指针和 ledger 变更必须持有同一个实例级发布锁。
 
 ## 当前边界
 

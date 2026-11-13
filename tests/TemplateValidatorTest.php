@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use LandingOps\Contract\Json;
+use LandingOps\Contract\ConfigValidator;
 use LandingOps\Template\TemplateValidator;
 use LandingOps\Tests\FixtureFactory;
 use LandingOps\Tests\TestHarness as T;
@@ -175,6 +176,125 @@ return [
         FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
         $validation = (new TemplateValidator())->validate($zip);
         T::assertTrue($validation->result->isValid(), Json::encode((object) $validation->result->toArray(), true));
+    },
+
+    'validator rejects direct self references in private definitions' => static function (): void {
+        $dir = T::tempDirectory('private-self-ref');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $schema->{'$defs'}->privateLoop = (object) [
+            '$ref' => '#/$defs/privateLoop',
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->properties->private_note = (object) [
+            '$ref' => '#/$defs/privateLoop',
+            'x-landingops-visibility' => 'private',
+        ];
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue(in_array(
+            'schema_ref_cycle',
+            array_column($validation->result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
+    'validator rejects indirect cycles across unused private definitions' => static function (): void {
+        $dir = T::tempDirectory('private-double-ref');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $schema->{'$defs'}->privateA = (object) [
+            '$ref' => '#/$defs/privateB',
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->{'$defs'}->privateB = (object) [
+            '$ref' => '#/$defs/privateA',
+            'x-landingops-visibility' => 'private',
+        ];
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue(in_array(
+            'schema_ref_cycle',
+            array_column($validation->result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
+    'validator accepts an acyclic nested private reference chain' => static function (): void {
+        $dir = T::tempDirectory('private-ref-chain');
+        $zip = $dir . '/template.zip';
+        $schema = Json::decode((string) file_get_contents(FixtureFactory::sampleDirectory() . '/config.schema.json'), 'schema');
+        $schema->{'$defs'}->privateString = (object) [
+            'type' => 'string',
+            'maxLength' => 200,
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->{'$defs'}->privateAliasB = (object) [
+            '$ref' => '#/$defs/privateString',
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->{'$defs'}->privateAliasA = (object) [
+            '$ref' => '#/$defs/privateAliasB',
+            'x-landingops-visibility' => 'private',
+        ];
+        $schema->properties->private_note = (object) [
+            '$ref' => '#/$defs/privateAliasA',
+            'x-landingops-visibility' => 'private',
+        ];
+        FixtureFactory::sampleZip($zip, replace: ['config.schema.json' => Json::encode($schema, true)]);
+        $validation = (new TemplateValidator())->validate($zip);
+        T::assertTrue($validation->result->isValid(), Json::encode((object) $validation->result->toArray(), true));
+    },
+
+    'config validator stops cyclic schemas even when contract validation is bypassed' => static function (): void {
+        $schema = (object) [
+            '$defs' => (object) [
+                'a' => (object) ['$ref' => '#/$defs/b'],
+                'b' => (object) ['$ref' => '#/$defs/a'],
+            ],
+            '$ref' => '#/$defs/a',
+        ];
+        $result = (new ConfigValidator())->validate('value', $schema);
+        T::assertTrue(in_array(
+            'config_schema_cycle',
+            array_column($result->toArray()['errors'], 'code'),
+            true,
+        ));
+    },
+
+    'config validator accepts a legal nested reference chain' => static function (): void {
+        $schema = (object) [
+            'type' => 'object',
+            'additionalProperties' => false,
+            'required' => ['value'],
+            'properties' => (object) [
+                'value' => (object) ['$ref' => '#/$defs/a'],
+            ],
+            '$defs' => (object) [
+                'a' => (object) ['$ref' => '#/$defs/b'],
+                'b' => (object) ['type' => 'string', 'minLength' => 1],
+            ],
+        ];
+        $result = (new ConfigValidator())->validate((object) ['value' => 'valid'], $schema);
+        T::assertTrue($result->isValid(), Json::encode((object) $result->toArray(), true));
+    },
+
+    'config validator enforces a maximum recursive schema depth' => static function (): void {
+        $schema = (object) ['type' => 'string'];
+        $config = 'leaf';
+        for ($index = 0; $index < 140; $index++) {
+            $schema = (object) [
+                'type' => 'object',
+                'properties' => (object) ['child' => $schema],
+            ];
+            $config = (object) ['child' => $config];
+        }
+        $result = (new ConfigValidator())->validate($config, $schema);
+        T::assertTrue(in_array(
+            'config_recursion_limit',
+            array_column($result->toArray()['errors'], 'code'),
+            true,
+        ));
     },
 
     'validator rejects unmarked nested reference targets' => static function (): void {

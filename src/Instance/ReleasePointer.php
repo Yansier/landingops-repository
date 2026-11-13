@@ -10,16 +10,19 @@ use LandingOps\Filesystem\LocalFilesystem;
 final class ReleasePointer
 {
     private readonly string $pointerPath;
+    private readonly InstanceLock $instanceLock;
 
     public function __construct(
         private readonly string $instanceRoot,
         private readonly LocalFilesystem $filesystem = new LocalFilesystem(),
     ) {
         $this->pointerPath = $instanceRoot . DIRECTORY_SEPARATOR . 'current.release';
+        $this->instanceLock = new InstanceLock($instanceRoot, $filesystem);
     }
 
     public function activate(string $releaseId): void
     {
+        $this->instanceLock->assertHeld();
         if (preg_match('/^r[1-9]\d*-[a-f0-9]{12}$/D', $releaseId) !== 1) {
             throw new LandingOpsException('release ID 格式非法。');
         }

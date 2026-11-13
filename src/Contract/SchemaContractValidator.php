@@ -41,6 +41,7 @@ final class SchemaContractValidator
 
         $this->node($schema, '$', $result);
         $this->references($schema, '$', $schema, $result);
+        $this->referenceCycles($schema, $result);
         return $result;
     }
 
@@ -337,5 +338,115 @@ final class SchemaContractValidator
                 }
             }
         }
+    }
+
+    private function referenceCycles(stdClass $root, ValidationResult $result): void
+    {
+        $defs = $root->{'$defs'} ?? null;
+        if (!($defs instanceof stdClass)) {
+            return;
+        }
+
+        /** @var array<string,list<string>> $graph */
+        $graph = [];
+        foreach (get_object_vars($defs) as $name => $definition) {
+            if (!($definition instanceof stdClass)) {
+                continue;
+            }
+            $references = [];
+            $this->collectReferences($definition, $references);
+            $graph[$name] = array_values(array_unique(array_filter(
+                $references,
+                static fn (string $reference): bool => property_exists($defs, $reference),
+            )));
+        }
+
+        /** @var array<string,int> $states */
+        $states = [];
+        /** @var list<string> $stack */
+        $stack = [];
+        /** @var array<string,bool> $reported */
+        $reported = [];
+        foreach (array_keys($graph) as $name) {
+            $this->visitReferenceGraph($name, $graph, $states, $stack, $reported, $result);
+        }
+    }
+
+    /** @param list<string> $references */
+    private function collectReferences(stdClass $node, array &$references): void
+    {
+        if (is_string($node->{'$ref'} ?? null)
+            && preg_match('~^\#/\$defs/([A-Za-z_][A-Za-z0-9_-]*)$~D', $node->{'$ref'}, $matches) === 1
+        ) {
+            $references[] = $matches[1];
+            return;
+        }
+        if (($node->properties ?? null) instanceof stdClass) {
+            foreach (get_object_vars($node->properties) as $child) {
+                if ($child instanceof stdClass) {
+                    $this->collectReferences($child, $references);
+                }
+            }
+        }
+        if (($node->items ?? null) instanceof stdClass) {
+            $this->collectReferences($node->items, $references);
+        }
+        if (is_array($node->oneOf ?? null)) {
+            foreach ($node->oneOf as $child) {
+                if ($child instanceof stdClass) {
+                    $this->collectReferences($child, $references);
+                }
+            }
+        }
+        if (($node->{'$defs'} ?? null) instanceof stdClass) {
+            foreach (get_object_vars($node->{'$defs'}) as $child) {
+                if ($child instanceof stdClass) {
+                    $this->collectReferences($child, $references);
+                }
+            }
+        }
+    }
+
+    /**
+     * @param array<string,list<string>> $graph
+     * @param array<string,int> $states
+     * @param list<string> $stack
+     * @param array<string,bool> $reported
+     */
+    private function visitReferenceGraph(
+        string $name,
+        array $graph,
+        array &$states,
+        array &$stack,
+        array &$reported,
+        ValidationResult $result,
+    ): void {
+        $state = $states[$name] ?? 0;
+        if ($state === 2) {
+            return;
+        }
+        if ($state === 1) {
+            $start = array_search($name, $stack, true);
+            $cycle = $start === false ? [$name, $name] : array_slice($stack, $start);
+            $cycle[] = $name;
+            $signature = implode('->', $cycle);
+            if (!isset($reported[$signature])) {
+                $reported[$signature] = true;
+                $result->addError(
+                    'schema_ref_cycle',
+                    'JSON Schema $defs 存在循环引用：' . implode(' -> ', $cycle),
+                    '#/$defs/' . $name,
+                );
+            }
+            return;
+        }
+
+        $states[$name] = 1;
+        $stack[] = $name;
+        foreach ($graph[$name] ?? [] as $target) {
+            $this->visitReferenceGraph($target, $graph, $states, $stack, $reported, $result);
+        }
+        array_pop($stack);
+        $states[$name] = 2;
     }
 }

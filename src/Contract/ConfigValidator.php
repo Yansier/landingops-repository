@@ -9,22 +9,43 @@ use stdClass;
 
 final class ConfigValidator
 {
+    private const MAX_RECURSION_DEPTH = 128;
+
     public function validate(mixed $config, stdClass $schema): ValidationResult
     {
         $result = new ValidationResult();
-        $this->value($config, $schema, '$', $schema, $result);
+        $this->value($config, $schema, '$', $schema, $result, 0, []);
         return $result;
     }
 
-    private function value(mixed $value, stdClass $schema, string $path, stdClass $root, ValidationResult $result): void
-    {
+    /** @param array<string,bool> $refStack */
+    private function value(
+        mixed $value,
+        stdClass $schema,
+        string $path,
+        stdClass $root,
+        ValidationResult $result,
+        int $depth,
+        array $refStack,
+    ): void {
+        if ($depth > self::MAX_RECURSION_DEPTH) {
+            $result->addError('config_recursion_limit', '配置验证超过最大递归深度。', $path);
+            return;
+        }
+
         if (property_exists($schema, '$ref')) {
-            $target = $this->resolveRef($root, (string) $schema->{'$ref'});
+            $reference = (string) $schema->{'$ref'};
+            if (isset($refStack[$reference])) {
+                $result->addError('config_schema_cycle', '配置 schema 存在循环 $ref。', $path);
+                return;
+            }
+            $target = $this->resolveRef($root, $reference);
             if (!($target instanceof stdClass)) {
                 $result->addError('config_schema_ref', 'schema 本地引用无法解析。', $path);
                 return;
             }
-            $this->value($value, $target, $path, $root, $result);
+            $refStack[$reference] = true;
+            $this->value($value, $target, $path, $root, $result, $depth + 1, $refStack);
             return;
         }
 
@@ -32,9 +53,14 @@ final class ConfigValidator
             $validBranches = 0;
             foreach ($schema->oneOf as $branch) {
                 $branchResult = new ValidationResult();
-                $this->value($value, $branch, $path, $root, $branchResult);
+                $this->value($value, $branch, $path, $root, $branchResult, $depth + 1, $refStack);
                 if ($branchResult->isValid()) {
                     $validBranches++;
+                }
+                foreach ($branchResult->errors() as $issue) {
+                    if (in_array($issue->code, ['config_schema_cycle', 'config_recursion_limit'], true)) {
+                        $result->addError($issue->code, $issue->message, $issue->path);
+                    }
                 }
             }
             if ($validBranches !== 1) {
@@ -80,7 +106,15 @@ final class ConfigValidator
                     }
                     continue;
                 }
-                $this->value($childValue, $properties->{$name}, $path . '.' . $name, $root, $result);
+                $this->value(
+                    $childValue,
+                    $properties->{$name},
+                    $path . '.' . $name,
+                    $root,
+                    $result,
+                    $depth + 1,
+                    $refStack,
+                );
             }
         }
 
@@ -103,7 +137,15 @@ final class ConfigValidator
             }
             if (($schema->items ?? null) instanceof stdClass) {
                 foreach ($value as $index => $item) {
-                    $this->value($item, $schema->items, $path . '.' . $index, $root, $result);
+                    $this->value(
+                        $item,
+                        $schema->items,
+                        $path . '.' . $index,
+                        $root,
+                        $result,
+                        $depth + 1,
+                        $refStack,
+                    );
                 }
             }
         }

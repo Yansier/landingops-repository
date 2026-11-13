@@ -12,17 +12,21 @@ use stdClass;
 final class PublicationCoordinator
 {
     private readonly string $journalRoot;
+    private readonly InstanceLock $instanceLock;
 
     public function __construct(
         private readonly string $instanceRoot,
         private readonly LocalFilesystem $filesystem = new LocalFilesystem(),
     ) {
         $this->journalRoot = $instanceRoot . DIRECTORY_SEPARATOR . '.landingops-publications';
+        $this->instanceLock = new InstanceLock($instanceRoot, $filesystem);
+        $this->instanceLock->assertHeld();
         $this->filesystem->ensureDirectory($this->journalRoot);
     }
 
     public function begin(int $revision, string $stagingRoot): void
     {
+        $this->instanceLock->assertHeld();
         $stagingName = basename($stagingRoot);
         if (preg_match('/^revision-' . $revision . '-[a-f0-9]{8}$/D', $stagingName) !== 1) {
             throw new LandingOpsException('publication staging 名称非法。');
@@ -38,21 +42,25 @@ final class PublicationCoordinator
 
     public function stageReady(int $revision, string $releaseId): void
     {
+        $this->instanceLock->assertHeld();
         $this->transition($revision, 'staging_ready', $releaseId);
     }
 
     public function releaseCommitted(int $revision): void
     {
+        $this->instanceLock->assertHeld();
         $this->transition($revision, 'release_committed');
     }
 
     public function pointerActivated(int $revision): void
     {
+        $this->instanceLock->assertHeld();
         $this->transition($revision, 'pointer_activated');
     }
 
     public function complete(int $revision): void
     {
+        $this->instanceLock->assertHeld();
         $path = $this->journalPath($revision);
         if (is_file($path) && !unlink($path)) {
             throw new LandingOpsException('无法清理 publication journal。');
@@ -61,11 +69,15 @@ final class PublicationCoordinator
 
     public function recover(RevisionLedger $ledger, ReleasePointer $pointer): void
     {
+        $this->instanceLock->assertHeld();
         $journals = glob($this->journalRoot . DIRECTORY_SEPARATOR . 'revision-*.json') ?: [];
         usort($journals, static function (string $left, string $right): int {
             return self::revisionFromPath($left) <=> self::revisionFromPath($right);
         });
 
+        $state = $ledger->state();
+        $valid = [];
+        $discard = [];
         foreach ($journals as $path) {
             $journal = $this->read($path);
             $revision = $journal->revision;
@@ -78,27 +90,83 @@ final class PublicationCoordinator
             $releaseExists = is_string($releasePath)
                 && $this->isCompleteRelease($releasePath, $revision, (string) $releaseId);
 
+            $status = property_exists($state->allocations, (string) $revision)
+                ? $state->allocations->{(string) $revision}
+                : null;
             if ($journal->phase === 'allocated'
                 || ($journal->phase === 'staging_ready' && !$releaseExists)
+                || $status === 'failed'
             ) {
-                if (is_dir($staging)) {
-                    $this->filesystem->removeTree($staging, dirname($staging));
-                }
-                $ledger->markFailed($revision);
-                $this->complete($revision);
+                $discard[] = [$revision, $staging];
                 continue;
             }
 
             if ($releaseId === null || !$releaseExists) {
-                $ledger->markFailed($revision);
-                $this->complete($revision);
+                $discard[] = [$revision, $staging];
                 continue;
             }
 
-            $pointer->activate($releaseId);
-            $ledger->markActive($revision, $releaseId);
-            $this->complete($revision);
+            $valid[$revision] = ['release_id' => $releaseId, 'journal' => true];
         }
+
+        $currentId = $pointer->currentId();
+        $current = is_string($currentId) ? $this->releaseCandidate($currentId, $state) : null;
+        if ($current !== null) {
+            $valid[$current['revision']] = ['release_id' => $current['release_id'], 'journal' => false];
+        }
+        if (is_int($state->active_revision) && is_string($state->active_release_id)) {
+            $active = $this->releaseCandidate($state->active_release_id, $state);
+            if ($active !== null && $active['revision'] === $state->active_revision) {
+                $valid[$active['revision']] = ['release_id' => $active['release_id'], 'journal' => false];
+            }
+        }
+
+        if ($valid !== []) {
+            ksort($valid, SORT_NUMERIC);
+            $winnerRevision = (int) array_key_last($valid);
+            $winnerId = $valid[$winnerRevision]['release_id'];
+            if ($pointer->currentId() !== $winnerId) {
+                $pointer->activate($winnerId);
+            }
+            $ledger->markActive($winnerRevision, $winnerId);
+
+            foreach ($valid as $revision => $candidate) {
+                if ((int) $revision < $winnerRevision) {
+                    $ledger->markSuperseded((int) $revision);
+                }
+            }
+        }
+
+        foreach ($discard as [$revision, $staging]) {
+            if (is_dir($staging)) {
+                $this->filesystem->removeTree($staging, dirname($staging));
+            }
+            $ledger->markFailed($revision);
+        }
+        foreach ($journals as $path) {
+            $revision = self::revisionFromPath($path);
+            if (is_file($path)) {
+                $this->complete($revision);
+            }
+        }
+    }
+
+    /** @return array{revision:int,release_id:string}|null */
+    private function releaseCandidate(string $releaseId, stdClass $ledgerState): ?array
+    {
+        if (preg_match('/^r([1-9]\d*)-[a-f0-9]{12}$/D', $releaseId, $matches) !== 1) {
+            return null;
+        }
+        $revision = (int) $matches[1];
+        if (!property_exists($ledgerState->allocations, (string) $revision)
+            || $ledgerState->allocations->{(string) $revision} === 'failed'
+        ) {
+            return null;
+        }
+        $path = $this->instanceRoot . DIRECTORY_SEPARATOR . 'releases' . DIRECTORY_SEPARATOR . $releaseId;
+        return $this->isCompleteRelease($path, $revision, $releaseId)
+            ? ['revision' => $revision, 'release_id' => $releaseId]
+            : null;
     }
 
     private function transition(int $revision, string $phase, ?string $releaseId = null): void

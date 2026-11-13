@@ -6,10 +6,58 @@ use LandingOps\Exception\ValidationException;
 use LandingOps\Exception\PublicationInterruptedException;
 use LandingOps\Instance\OfflinePublicRouter;
 use LandingOps\Instance\OfflineInstanceBuilder;
+use LandingOps\Instance\InstanceLock;
 use LandingOps\Instance\ReleasePointer;
 use LandingOps\Instance\RevisionLedger;
 use LandingOps\Tests\FixtureFactory;
 use LandingOps\Tests\TestHarness as T;
+
+$startLockWorker = static function (
+    string $mode,
+    string $instance,
+    string $ready,
+    int $milliseconds,
+): array {
+    $command = [
+        PHP_BINARY,
+        __DIR__ . '/helpers/instance-lock-worker.php',
+        $mode,
+        $instance,
+        $ready,
+        (string) $milliseconds,
+    ];
+    $pipes = [];
+    $process = proc_open($command, [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ], $pipes);
+    if (!is_resource($process)) {
+        throw new RuntimeException('Unable to start instance lock worker.');
+    }
+    fclose($pipes[0]);
+    return [$process, $pipes];
+};
+
+$waitForFile = static function (string $path, int $timeoutMilliseconds = 3000): void {
+    $deadline = microtime(true) + ($timeoutMilliseconds / 1000);
+    while (!is_file($path) && microtime(true) < $deadline) {
+        usleep(10_000);
+    }
+    T::assertFileExists($path);
+};
+
+$closeWorker = static function ($process, array $pipes, bool $terminate = false): int {
+    if ($terminate && (proc_get_status($process)['running'] ?? false)) {
+        proc_terminate($process);
+    }
+    foreach ($pipes as $pipe) {
+        if (is_resource($pipe)) {
+            fclose($pipe);
+        }
+    }
+    return proc_close($process);
+};
 
 $recoveryScenario = static function (string $faultPoint, bool $pointerMovesBeforeRecovery): void {
     $dir = T::tempDirectory('recovery-' . $faultPoint);
@@ -147,5 +195,160 @@ return [
 
     'recovery reconciles pointer switch before ledger completion' => static function () use ($recoveryScenario): void {
         $recoveryScenario('after_pointer_activated', true);
+    },
+
+    'instance lock is reentrant while different instances remain independent' => static function () use (
+        $startLockWorker,
+        $waitForFile,
+        $closeWorker,
+    ): void {
+        $dir = T::tempDirectory('instance-lock-independent');
+        $instanceA = $dir . '/instance-a';
+        $instanceB = $dir . '/instance-b';
+        $nested = false;
+        (new InstanceLock($instanceA))->synchronized(static function () use ($instanceA, &$nested): void {
+            (new InstanceLock($instanceA))->synchronized(static function () use (&$nested): void {
+                $nested = true;
+            });
+        });
+        T::assertTrue($nested, 'Reentrant lock callback did not complete.');
+
+        $ready = $dir . '/instance-a.ready';
+        [$process, $pipes] = $startLockWorker('hold', $instanceA, $ready, 3000);
+        try {
+            $waitForFile($ready);
+            $independent = false;
+            (new InstanceLock($instanceB))->synchronized(static function () use (&$independent): void {
+                $independent = true;
+            });
+            T::assertTrue($independent);
+            T::assertTrue((proc_get_status($process)['running'] ?? false), 'Instance B waited for instance A lock.');
+        } finally {
+            $closeWorker($process, $pipes, true);
+        }
+    },
+
+    'concurrent holder serializes the complete build lifecycle' => static function () use (
+        $startLockWorker,
+        $waitForFile,
+        $closeWorker,
+    ): void {
+        $dir = T::tempDirectory('instance-lock-build');
+        $zip = $dir . '/template.zip';
+        FixtureFactory::sampleZip($zip);
+        $instance = $dir . '/instance';
+        $ready = $dir . '/holder.ready';
+        [$process, $pipes] = $startLockWorker('hold', $instance, $ready, 700);
+        try {
+            $waitForFile($ready);
+            $started = microtime(true);
+            $build = (new OfflineInstanceBuilder())->build($zip, FixtureFactory::sampleConfig(), $instance);
+            $elapsed = microtime(true) - $started;
+            T::assertSame(1, $build->revision);
+            T::assertTrue($elapsed >= 0.4, sprintf('Build did not wait for instance lock: %.3fs', $elapsed));
+        } finally {
+            $closeWorker($process, $pipes);
+        }
+    },
+
+    'recovery serializes with a holder and proceeds after process crash' => static function () use (
+        $startLockWorker,
+        $waitForFile,
+        $closeWorker,
+    ): void {
+        $dir = T::tempDirectory('instance-lock-recovery');
+        $zip = $dir . '/template.zip';
+        FixtureFactory::sampleZip($zip);
+        $instance = $dir . '/instance';
+        $baseline = (new OfflineInstanceBuilder())->build($zip, FixtureFactory::sampleConfig(), $instance);
+
+        $interruptAtStaging = static function (string $point, int $revision, string $releaseId): void {
+            if ($point === 'after_staging_ready') {
+                throw new PublicationInterruptedException('staging interruption');
+            }
+        };
+        T::assertThrows(
+            static fn () => (new OfflineInstanceBuilder(faultInjector: $interruptAtStaging))
+                ->build($zip, FixtureFactory::sampleConfig(), $instance),
+            PublicationInterruptedException::class,
+        );
+
+        $ready = $dir . '/recovery-holder.ready';
+        [$process, $pipes] = $startLockWorker('hold', $instance, $ready, 700);
+        try {
+            $waitForFile($ready);
+            $started = microtime(true);
+            (new OfflineInstanceBuilder())->recover($instance);
+            $elapsed = microtime(true) - $started;
+            T::assertTrue($elapsed >= 0.4, sprintf('Recovery did not wait for instance lock: %.3fs', $elapsed));
+        } finally {
+            $closeWorker($process, $pipes);
+        }
+
+        T::assertThrows(
+            static fn () => (new OfflineInstanceBuilder(faultInjector: $interruptAtStaging))
+                ->build($zip, FixtureFactory::sampleConfig(), $instance),
+            PublicationInterruptedException::class,
+        );
+        $crashReady = $dir . '/crash-holder.ready';
+        [$crashProcess, $crashPipes] = $startLockWorker('crash', $instance, $crashReady, 0);
+        $waitForFile($crashReady);
+        $closeWorker($crashProcess, $crashPipes);
+
+        (new OfflineInstanceBuilder())->recover($instance);
+        $state = (new RevisionLedger($instance))->state();
+        T::assertSame($baseline->releaseId, (new ReleasePointer($instance))->currentId());
+        T::assertSame('failed', $state->allocations->{'2'});
+        T::assertSame('failed', $state->allocations->{'3'});
+        T::assertSame(4, $state->next_revision);
+    },
+
+    'recovery chooses the newest valid release across legacy journals' => static function (): void {
+        $dir = T::tempDirectory('legacy-journal-order');
+        $zip = $dir . '/template.zip';
+        FixtureFactory::sampleZip($zip);
+        $instance = $dir . '/instance';
+        (new OfflineInstanceBuilder())->build($zip, FixtureFactory::sampleConfig(), $instance);
+
+        $interruptAtCommit = static function (string $point, int $revision, string $releaseId): void {
+            if ($point === 'after_release_committed') {
+                throw new PublicationInterruptedException('release committed interruption');
+            }
+        };
+        $secondConfig = FixtureFactory::sampleConfig();
+        $secondConfig->custom->headline = 'legacy release two';
+        T::assertThrows(
+            static fn () => (new OfflineInstanceBuilder(faultInjector: $interruptAtCommit))
+                ->build($zip, $secondConfig, $instance),
+            PublicationInterruptedException::class,
+        );
+        $journalRoot = $instance . '/.landingops-publications';
+        $journalTwo = (string) file_get_contents($journalRoot . '/revision-2.json');
+        (new OfflineInstanceBuilder())->recover($instance);
+
+        $thirdConfig = FixtureFactory::sampleConfig();
+        $thirdConfig->custom->headline = 'newest release three';
+        T::assertThrows(
+            static fn () => (new OfflineInstanceBuilder(faultInjector: $interruptAtCommit))
+                ->build($zip, $thirdConfig, $instance),
+            PublicationInterruptedException::class,
+        );
+        $journalThree = (string) file_get_contents($journalRoot . '/revision-3.json');
+        (new OfflineInstanceBuilder())->recover($instance);
+        $newest = (new ReleasePointer($instance))->currentId();
+        T::assertTrue(is_string($newest) && str_starts_with($newest, 'r3-'));
+
+        file_put_contents($journalRoot . '/revision-2.json', $journalTwo, LOCK_EX);
+        file_put_contents($journalRoot . '/revision-3.json', $journalThree, LOCK_EX);
+        (new OfflineInstanceBuilder())->recover($instance);
+        T::assertSame($newest, (new ReleasePointer($instance))->currentId());
+
+        file_put_contents($journalRoot . '/revision-2.json', $journalTwo, LOCK_EX);
+        (new OfflineInstanceBuilder())->recover($instance);
+        $state = (new RevisionLedger($instance))->state();
+        T::assertSame($newest, (new ReleasePointer($instance))->currentId());
+        T::assertSame(3, $state->active_revision);
+        T::assertSame('superseded', $state->allocations->{'2'});
+        T::assertSame('active', $state->allocations->{'3'});
     },
 ];

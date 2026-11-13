@@ -13,6 +13,7 @@ final class RevisionLedger
 {
     private readonly string $statePath;
     private readonly string $lockPath;
+    private readonly InstanceLock $instanceLock;
 
     public function __construct(
         private readonly string $instanceRoot,
@@ -20,11 +21,13 @@ final class RevisionLedger
     ) {
         $this->statePath = $instanceRoot . DIRECTORY_SEPARATOR . 'revision-ledger.json';
         $this->lockPath = $instanceRoot . DIRECTORY_SEPARATOR . 'revision-ledger.lock';
+        $this->instanceLock = new InstanceLock($instanceRoot, $filesystem);
         $this->filesystem->ensureDirectory($instanceRoot);
     }
 
     public function allocate(): int
     {
+        $this->instanceLock->assertHeld();
         return $this->locked(function (stdClass $state): array {
             $revision = (int) $state->next_revision;
             $state->next_revision = $revision + 1;
@@ -35,6 +38,7 @@ final class RevisionLedger
 
     public function markActive(int $revision, string $releaseId): void
     {
+        $this->instanceLock->assertHeld();
         $this->locked(function (stdClass $state) use ($revision, $releaseId): array {
             $this->assertAllocated($state, $revision);
             $status = $state->allocations->{(string) $revision};
@@ -58,10 +62,26 @@ final class RevisionLedger
 
     public function markFailed(int $revision): void
     {
+        $this->instanceLock->assertHeld();
         $this->locked(function (stdClass $state) use ($revision): array {
             $this->assertAllocated($state, $revision);
             if (!in_array($state->allocations->{(string) $revision}, ['active', 'superseded'], true)) {
                 $state->allocations->{(string) $revision} = 'failed';
+            }
+            return [$state, null];
+        });
+    }
+
+    public function markSuperseded(int $revision): void
+    {
+        $this->instanceLock->assertHeld();
+        $this->locked(function (stdClass $state) use ($revision): array {
+            $this->assertAllocated($state, $revision);
+            if ($state->active_revision === $revision) {
+                throw new LandingOpsException('当前 active revision 不能直接标记为 superseded。');
+            }
+            if ($state->allocations->{(string) $revision} !== 'failed') {
+                $state->allocations->{(string) $revision} = 'superseded';
             }
             return [$state, null];
         });
