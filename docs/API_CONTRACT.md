@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-本文固定 V1 的资源、授权、并发和错误语义，也标明当前 PHP 控制面子集。Phase 1G 只通过固定 Cloudflare 官方 API origin 执行 Token、Zone 和 DNS Read，不执行任何第三方写操作。
+本文固定 V1 的资源、授权、并发和错误语义，也标明当前 PHP 控制面子集。Phase 1G 只通过固定 Cloudflare 官方 API origin 执行 Token、Zone 和 DNS Read；Phase 1H 只通过运维白名单中的单一宝塔 HTTPS origin 执行文档确认的只读动作，均不执行第三方写操作。
 
 建议前缀 `/api/v1`，JSON 使用 UTF-8、`snake_case`；时间为 UTC RFC 3339；资源 ID 为不可枚举 UUID/ULID。生产只允许 HTTPS。
 
@@ -206,7 +206,7 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 - 模板截图、预览、缩略图生成或独立预览服务。
 - 审核规避、按检测人员身份分流或随机隐藏文件的接口。
 
-## 11. Phase 1E 实现状态
+## 11. Phase 1H 实现状态
 
 以下路径均位于 `/api/v1`：
 
@@ -221,7 +221,13 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 | `GET /templates`、`POST /templates/uploads` | 已实现角色范围查询与单 ZIP 上传；上传沿用 LTS v1.0 验证器 |
 | `GET /template-versions/{id}/validation` | 已实现授权范围内的脱敏验证报告 |
 | `POST /template-versions/{id}/grants`、`DELETE /template-versions/{id}/grants/{team_id}` | 已实现总管理员授权、撤销、再次授权与审计 |
-| 主域名、任务、宝塔设置业务端点 | 明确返回 `501 not_implemented`，不得返回伪成功 |
+| Cloudflare 连接、Zone、主域名与团队授权 | 已实现资源登记、加密 Token、状态管理和只读验证；不提供 DNS 写入 |
+| `GET/PUT /settings/baota` | 已实现总管理员读取/登记/轮换/显式启停单例；响应仅含脱敏 Key 提示 |
+| `POST /settings/baota/verifications` | 已实现固定 origin、固定 action 的只读连接检查；提交 `expected_version`，不接受任意 URL/action |
+| `GET /settings/baota/sites` | 已实现站点、绑定域名、根目录和 PHP 元数据发现；全部既有站点默认是外部资源 |
+| `POST /settings/baota/prechecks` | 已实现候选 `hostname` 的 FQDN、根目录、实例与预留冲突检查；不写面板或文件系统 |
+| `GET /settings/baota/isolation-checks` | 已实现只读隔离能力报告；证据不足时 PHP 部署保持禁用 |
+| 部署任务与宝塔/DNS 写入端点 | 明确不提供或返回 `501 not_implemented`，不得返回伪成功 |
 
-当前列表端点暂不实现游标翻页；返回固定 `has_more=false`。该限制必须在数据量增长前补齐。主域名授权仍只有服务层契约，未开放业务 API。
+当前控制面列表端点暂不实现客户端游标翻页；返回固定 `has_more=false`。宝塔适配器内部按官方 `getData` 分页读取并设置安全上限。所有宝塔写操作仍不属于当前 API。
 

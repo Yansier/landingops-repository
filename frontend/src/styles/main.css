@@ -268,3 +268,5 @@ input:disabled,select:disabled{background:#f5f6f8;color:#8b95a5}
 .zone-section{margin-top:18px}
 @media(max-width:900px){.domain-grid{grid-template-columns:1fr}}
 @media(max-width:760px){.header-actions{width:100%;display:grid;grid-template-columns:1fr 1fr}.domain-card dl{grid-template-columns:1fr}.domain-card dl div:nth-child(odd){border-right:0}}
+.baota-inline-form{display:flex;gap:10px;margin-bottom:14px}.baota-inline-form input{min-width:0;flex:1}.baota-result{display:grid}.baota-result small{display:block}.tag{display:inline-block;margin:2px 5px 2px 0;padding:3px 7px;border-radius:999px;background:#eef2f8;color:#526079;font-size:9px}.table-wrap td small{display:block;margin-top:4px;color:var(--muted)}
+@media(max-width:620px){.baota-inline-form{align-items:stretch;flex-direction:column}}

@@ -9,6 +9,8 @@ use LandingOps\ControlPlane\Auth\Role;
 use LandingOps\ControlPlane\Auth\SessionService;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Service\AccountService;
+use LandingOps\ControlPlane\Service\BaotaConfigService;
+use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
@@ -36,6 +38,8 @@ final class ControlPlaneKernel
         private readonly ?DomainResourceService $domains = null,
         private readonly ?CloudflareVerificationService $cloudflareVerifications = null,
         private readonly ?CloudflareDnsPrecheckService $dnsPrechecks = null,
+        private readonly ?BaotaConfigService $baotaConfigs = null,
+        private readonly ?BaotaReadOnlyService $baotaReadOnly = null,
     ) {
     }
 
@@ -301,7 +305,36 @@ final class ControlPlaneKernel
             ), $requestId);
         }
 
-        foreach (['/api/v1/jobs', '/api/v1/settings/baota'] as $prefix) {
+        if ($method === 'GET' && $path === '/api/v1/settings/baota') {
+            return $this->success($this->baotaConfigManagement()->get($principal), $requestId);
+        }
+        if ($method === 'PUT' && $path === '/api/v1/settings/baota') {
+            $this->csrf($request, $session);
+            return $this->success($this->baotaConfigManagement()->save($principal, $request->body, $requestId), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/settings/baota/verifications') {
+            $this->csrf($request, $session);
+            return $this->success($this->baotaReadOnlyManagement()->verify(
+                $principal,
+                $this->integer($request->body, 'expected_version'),
+                $requestId,
+            ), $requestId);
+        }
+        if ($method === 'GET' && $path === '/api/v1/settings/baota/sites') {
+            return $this->list($this->baotaReadOnlyManagement()->sites($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/settings/baota/prechecks') {
+            $this->csrf($request, $session);
+            return $this->success($this->baotaReadOnlyManagement()->precheck(
+                $principal,
+                $this->string($request->body, 'hostname'),
+            ), $requestId);
+        }
+        if ($method === 'GET' && $path === '/api/v1/settings/baota/isolation-checks') {
+            return $this->success($this->baotaReadOnlyManagement()->isolation($principal), $requestId);
+        }
+
+        foreach (['/api/v1/jobs'] as $prefix) {
             if (str_starts_with($path, $prefix)) {
                 throw new ApiException(501, 'not_implemented', '该资源接口不属于 Phase 1C。');
             }
@@ -417,6 +450,22 @@ final class ControlPlaneKernel
         return $this->dnsPrechecks;
     }
 
+    private function baotaConfigManagement(): BaotaConfigService
+    {
+        if ($this->baotaConfigs === null) {
+            throw new ApiException(501, 'not_implemented', '宝塔连接管理服务尚未配置。');
+        }
+        return $this->baotaConfigs;
+    }
+
+    private function baotaReadOnlyManagement(): BaotaReadOnlyService
+    {
+        if ($this->baotaReadOnly === null) {
+            throw new ApiException(501, 'not_implemented', '宝塔只读预检查服务尚未配置。');
+        }
+        return $this->baotaReadOnly;
+    }
+
     /** @param array<string,mixed> $file */
     private function fileString(array $file, string $key): string
     {
@@ -456,6 +505,7 @@ final class ControlPlaneKernel
             'transfer_owner' => in_array($principal->role, [Role::SUPER_ADMIN, Role::TEAM_ADMIN], true),
             'manage_cloudflare' => $principal->role === Role::SUPER_ADMIN,
             'manage_domains' => $principal->role === Role::SUPER_ADMIN,
+            'manage_baota' => $principal->role === Role::SUPER_ADMIN,
         ];
     }
 

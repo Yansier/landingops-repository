@@ -13,6 +13,7 @@ use LandingOps\ControlPlane\Database\PdoFactory;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Security\AeadSecretCipher;
+use LandingOps\ControlPlane\Service\BaotaConfigService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
@@ -208,6 +209,8 @@ try {
         showCreateTable($pdo, 'domain_reservations'),
         showCreateTable($pdo, 'cloudflare_connections'),
         showCreateTable($pdo, 'cloudflare_zones'),
+        showCreateTable($pdo, 'baota_config'),
+        showCreateTable($pdo, 'instances'),
     ];
     $dataBeforeRepeat = [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
@@ -221,6 +224,8 @@ try {
         showCreateTable($pdo, 'domain_reservations'),
         showCreateTable($pdo, 'cloudflare_connections'),
         showCreateTable($pdo, 'cloudflare_zones'),
+        showCreateTable($pdo, 'baota_config'),
+        showCreateTable($pdo, 'instances'),
     ], '重复执行迁移改变了活动键表结构。');
     integrationAssert($dataBeforeRepeat === [
         (int) $pdo->query('SELECT COUNT(*) FROM site_releases')->fetchColumn(),
@@ -253,6 +258,19 @@ try {
         . "OR (table_name='cloudflare_zones' AND column_name='verified_credential_context_version'))",
     )->fetchColumn();
     integrationAssert($bindingColumnCount === 2, '004 的凭据上下文字段未完整创建。');
+    $baotaCheckCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
+        . "AND constraint_name IN ('chk_baota_config_admin_state','chk_baota_config_verification_status',"
+        . "'chk_baota_config_version','chk_instances_baota_ownership_evidence') AND constraint_type = 'CHECK'",
+    )->fetchColumn();
+    integrationAssert($baotaCheckCount === 4, '005 的宝塔状态与所有权证据 CHECK 未完整创建。');
+    $baotaColumnCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND "
+        . "((table_name='baota_config' AND column_name IN ('api_key_hint','admin_state','verification_status',"
+        . "'last_verification_attempt_at','last_verification_result_json','panel_version','capabilities_json','version')) "
+        . "OR (table_name='instances' AND column_name IN ('baota_site_external_id','baota_site_root_path','ownership_marker_hash'))) ",
+    )->fetchColumn();
+    integrationAssert($baotaColumnCount === 11, '005 的宝塔连接与实例所有权字段未完整创建。');
 
     $businessTables = [
         'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
@@ -614,14 +632,29 @@ try {
         $domainService->grant($super, (string) $managedDomain['id'], $teamA, 'mysql-domain-regrant');
         integrationAssert(count($domainService->listDomains($adminA)) >= 1, '主域名重新授权失败。');
 
+        $baotaService = new BaotaConfigService($repository, $cipher, new AuthorizationService());
+        $baotaSecret = 'mysql-baota-key-' . bin2hex(random_bytes(8));
+        $managedBaota = $baotaService->save($super, [
+            'base_url' => 'https://panel.integration.invalid:8888', 'api_key' => $baotaSecret,
+        ], 'mysql-baota-create');
+        $storedBaota = $repository->findBaotaConfig();
+        integrationAssert(is_array($storedBaota), '宝塔单例配置未通过真实 PDO 入库。');
+        integrationAssert($baotaService->decryptApiKey($storedBaota) === $baotaSecret, '宝塔 API Key AEAD 回读失败。');
+        integrationAssert(!str_contains(json_encode($managedBaota, JSON_THROW_ON_ERROR), $baotaSecret), '宝塔 API Key 泄露到安全响应。');
+        $disabledBaota = $baotaService->save($super, [
+            'admin_state' => 'disabled', 'expected_version' => 1,
+        ], 'mysql-baota-disable');
+        $rotatedBaota = $baotaService->save($super, [
+            'api_key' => $baotaSecret . '-rotated', 'expected_version' => $disabledBaota['version'],
+        ], 'mysql-baota-rotate');
+        integrationAssert(
+            $rotatedBaota['admin_state'] === 'disabled' && $rotatedBaota['verification_status'] === 'unverified',
+            '宝塔密钥轮换错误地重新启用了已停用连接。',
+        );
         $insertBaota = $pdo->prepare(
             "INSERT INTO baota_config(id,singleton_key,base_url,api_key_ciphertext,secret_key_version,status,"
             . "created_by_user_id,updated_by_user_id,created_at,updated_at) VALUES (?,1,?,?,?,?,?,?,?,?)",
         );
-        $insertBaota->execute([
-            $ids->generate(), 'https://127.0.0.1:1', random_bytes(32), 'integration-only', 'unverified',
-            $superId, $superId, $now, $now,
-        ]);
         expectPdoConstraint(
             static fn () => $insertBaota->execute([
                 $ids->generate(), 'https://127.0.0.1:2', random_bytes(32), 'integration-only', 'unverified',
@@ -649,10 +682,11 @@ try {
         '002_fix_active_key_null_constraints',
         '003_split_cloudflare_admin_verification_state',
         '004_bind_cloudflare_zone_verification_context',
+        '005_baota_readonly_precheck',
     ], '测试结束后正式迁移账本不完整或含有临时迁移记录。');
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
-        . "；22 表、002/003/004、凭据上下文与多 Zone 失效、重复/失败迁移恢复、FK/CHECK/UNIQUE、"
-        . "PDO Session、负责人事务、单宝塔约束及测试数据清理均通过。\n");
+        . "；22 表、002/003/004/005、凭据上下文、多 Zone 失效、宝塔密文轮换、重复/失败迁移恢复、"
+        . "FK/CHECK/UNIQUE、PDO Session、负责人事务、单宝塔约束及测试数据清理均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')
         . $exception->getMessage() . PHP_EOL);

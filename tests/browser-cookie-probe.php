@@ -42,9 +42,45 @@ if ($method === 'GET' && $path === '/api/v1/me' && hash_equals('secure-cookie-pr
         'user' => $user,
         'capabilities' => [
             'manage_teams' => true, 'manage_users' => true, 'transfer_owner' => true,
-            'manage_cloudflare' => true, 'manage_domains' => true,
+            'manage_cloudflare' => true, 'manage_domains' => true, 'manage_baota' => true,
         ],
         'csrf_token' => 'refreshed-csrf',
+    ], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'GET' && $path === '/api/v1/settings/baota' && hash_equals('secure-cookie-probe', $cookie)) {
+    echo json_encode(['data' => [
+        'id' => '01BBBBBBBBBBBBBBBBBBBBBBBB', 'base_url_hint' => 'https://p***.example.test:8888',
+        'api_key_hint' => '…demo', 'status' => 'active', 'admin_state' => 'enabled',
+        'verification_status' => 'valid', 'panel_version' => '11.7.0',
+        'capabilities' => ['site_list' => 'supported', 'directory_metadata' => 'unsupported'],
+        'last_verified_at' => '2026-11-13 08:00:00', 'last_verification_attempt_at' => '2026-11-13 08:00:00',
+        'last_verification_result' => ['status' => 'valid'], 'version' => 2,
+        'created_at' => '2026-11-13 08:00:00', 'updated_at' => '2026-11-13 08:00:00',
+    ], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'GET' && $path === '/api/v1/settings/baota/sites' && hash_equals('secure-cookie-probe', $cookie)) {
+    echo json_encode(['data' => [[
+        'external_id' => 7, 'name' => 'legacy.example.test', 'path' => '/www/wwwroot/legacy',
+        'normalized_path' => '/www/wwwroot/legacy', 'status' => '1', 'metadata_complete' => true,
+        'domains' => ['legacy.example.test', 'alias.example.test'], 'domain_capability' => 'supported',
+        'php_capability' => 'supported', 'php_version' => '81',
+        'ownership' => ['classification' => 'external', 'instance_id' => null, 'reasons' => ['没有匹配外部站点 ID 的 LandingOps 实例。']],
+    ]], 'page' => ['next_cursor' => null, 'has_more' => false], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'GET' && $path === '/api/v1/settings/baota/isolation-checks' && hash_equals('secure-cookie-probe', $cookie)) {
+    echo json_encode(['data' => [
+        'checks' => [
+            ['key' => 'site_directory_organization', 'status' => 'supported', 'message' => '发现路径可规范化。'],
+            ['key' => 'per_site_php_fpm_pool', 'status' => 'unsupported', 'message' => '没有每站独立 FPM pool 的证据。'],
+        ],
+        'php_deployment' => ['status' => 'disabled', 'message' => '执行隔离证据不足，未来 PHP 部署保持禁用。'],
+        'mutations_performed' => false,
     ], 'request_id' => 'cookie-probe'], JSON_THROW_ON_ERROR);
     return;
 }

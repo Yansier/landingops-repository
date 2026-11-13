@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1G.1（Cloudflare 验证一致性与 DNS 安全预检查收尾）**。Zone 验证证据已绑定当前 Token/Account 信任上下文；轮换 Token 或修改账号标识会使该连接下全部 Zone 旧证据失效。DNS `compatible` 必须完整满足 A、确认 IPv4、`proxied=false`、`ttl=1`；不会创建或修改 DNS。
+> 当前状态：**Phase 1H（宝塔只读连接与站点隔离预检查）**。V1 只登记一台宝塔，使用固定 origin 与官方文档确认的只读动作发现系统、站点、绑定域名和 PHP 元数据。所有既有站点默认视为外部资源；不会创建、认领或修改网站、文件、Nginx、PHP-FPM、SSL 或 DNS。
 
 ## 最重要的边界
 
@@ -31,6 +31,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1E 模板管理](docs/PHASE_1E.md) | ZIP 上传、私有存储、团队授权、页面与安全测试说明 |
 | [Phase 1F 域名资源](docs/PHASE_1F.md) | Cloudflare 连接密文、Zone/主域名、团队授权与页面说明 |
 | [Phase 1G 只读验证](docs/PHASE_1G.md) | Cloudflare Token/Zone/DNS Read 验证、DNS 预检查和安全边界 |
+| [Phase 1H 宝塔只读预检查](docs/PHASE_1H.md) | 单宝塔密文配置、官方只读白名单、外部站点保护和隔离能力检查 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -57,11 +58,12 @@ examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)。
 
 ## 安全提示
 
 - 不提交宝塔 API Key、Cloudflare Token、数据库密码、原生后台密码或供应商组件中的密钥。
 - 文档中的域名、ID、URL 和哈希均为示例值或本地参考文件信息。
 - 在真实联调前，必须确认宝塔版本及 API 能力、Cloudflare Token 权限、服务器公网地址、Nginx/PHP 环境和证书策略。
+- 宝塔真实请求还要求 `LANDINGOPS_BAOTA_ALLOWED_BASE_URLS` 精确列出面板 HTTPS origin。保存配置不会发起请求；只读验证也必须由总管理员显式触发。
 

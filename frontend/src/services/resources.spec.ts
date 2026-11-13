@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureApi } from './api'
-import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, precheckDomainDns, revokePrimaryDomainGrant, revokeTemplateGrant, transferOwner, updateCloudflareConnection, uploadTemplate, verifyCloudflareConnection } from './resources'
+import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, precheckBaota, precheckDomainDns, revokePrimaryDomainGrant, revokeTemplateGrant, saveBaotaConfig, transferOwner, updateCloudflareConnection, uploadTemplate, verifyBaota, verifyCloudflareConnection } from './resources'
 
 const ok=(data:unknown)=>new Response(JSON.stringify({data,request_id:'req'}),{status:200,headers:{'Content-Type':'application/json'}})
 describe('业务请求契约',()=>{
@@ -57,5 +57,17 @@ describe('业务请求契约',()=>{
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({zone_id:'zone',expected_connection_version:4,expected_zone_version:2})
     expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/primary-domains/domain/dns-prechecks')
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({hostname:'www.pages.example.com'})
+  })
+  it('宝塔配置、验证与预检查只使用固定只读路由',async()=>{
+    fetchMock.mockImplementation(()=>Promise.resolve(ok({status:'success'})))
+    await saveBaotaConfig({base_url:'https://panel.example.test:8888',api_key:'secret-key'})
+    await verifyBaota(3)
+    await precheckBaota('page.example.test')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/settings/baota')
+    expect(fetchMock.mock.calls[0][1].method).toBe('PUT')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/settings/baota/verifications')
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({expected_version:3})
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/v1/settings/baota/prechecks')
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({hostname:'page.example.test'})
   })
 })

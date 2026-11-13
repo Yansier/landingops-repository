@@ -6,6 +6,7 @@ import type { Capabilities, User } from '@/types/api'
 const noCapabilities: Capabilities = {
   manage_teams: false, manage_users: false, transfer_owner: false,
   manage_cloudflare: false, manage_domains: false,
+  manage_baota: false,
 }
 
 export const useAuthStore = defineStore('auth', () => {

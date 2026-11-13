@@ -37,6 +37,11 @@ interface ControlPlaneRepository
     public function listInstances(?string $teamId, ?string $ownerUserId): array;
     /** @return array<string,mixed>|null */
     public function findInstance(string $id, bool $forUpdate = false): ?array;
+    /** @return array<string,mixed>|null */
+    public function findInstanceByNormalizedFqdn(string $normalizedFqdn): ?array;
+    /** @return array<string,mixed>|null */
+    public function findInstanceBySitePathKey(string $sitePathKey): ?array;
+    public function hasActiveDomainReservation(string $normalizedFqdn): bool;
     public function updateInstanceOwner(string $instanceId, string $ownerId, int $expectedVersion, string $at): bool;
     /** @param array<string,mixed> $history */
     public function insertOwnerHistory(array $history): void;
@@ -107,6 +112,12 @@ interface ControlPlaneRepository
     /** @param array<string,mixed> $grant */
     public function grantPrimaryDomain(array $grant): void;
     public function revokePrimaryDomainGrant(string $primaryDomainId, string $teamId, string $at): bool;
+    /** @return array<string,mixed>|null */
+    public function findBaotaConfig(): ?array;
+    /** @param array<string,mixed> $config */
+    public function insertBaotaConfig(array $config): void;
+    /** @param array<string,mixed> $changes */
+    public function updateBaotaConfig(string $id, array $changes, int $expectedVersion): bool;
     /** @param array<string,mixed> $audit */
     public function insertAudit(array $audit): void;
 }

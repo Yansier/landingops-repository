@@ -167,7 +167,8 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     {
         $sql = 'SELECT id, team_id, template_version_id, primary_domain_id, fqdn, status, version, '
             . 'created_by_user_id, current_owner_user_id, native_admin_enabled, active_config_revision, '
-            . 'active_release_id, created_at, updated_at FROM instances';
+            . 'active_release_id, normalized_fqdn, site_path_key, baota_site_external_id, '
+            . 'baota_site_root_path, ownership_marker_hash, created_at, updated_at FROM instances';
         $where = [];
         $parameters = [];
         if ($teamId !== null) {
@@ -187,6 +188,24 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
     public function findInstance(string $id, bool $forUpdate = false): ?array
     {
         return $this->one('SELECT * FROM instances WHERE id = ?' . ($forUpdate ? ' FOR UPDATE' : ''), [$id]);
+    }
+
+    public function findInstanceByNormalizedFqdn(string $normalizedFqdn): ?array
+    {
+        return $this->one('SELECT * FROM instances WHERE normalized_fqdn = ?', [$normalizedFqdn]);
+    }
+
+    public function findInstanceBySitePathKey(string $sitePathKey): ?array
+    {
+        return $this->one('SELECT * FROM instances WHERE site_path_key = ?', [$sitePathKey]);
+    }
+
+    public function hasActiveDomainReservation(string $normalizedFqdn): bool
+    {
+        return $this->one(
+            "SELECT id FROM domain_reservations WHERE normalized_fqdn = ? AND status IN ('held','committed') LIMIT 1",
+            [$normalizedFqdn],
+        ) !== null;
     }
 
     public function updateInstanceOwner(string $instanceId, string $ownerId, int $expectedVersion, string $at): bool
@@ -616,6 +635,56 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
             [$at, $primaryDomainId, $teamId],
         );
         return $statement->rowCount() === 1;
+    }
+
+    public function findBaotaConfig(): ?array
+    {
+        return $this->one('SELECT * FROM baota_config WHERE singleton_key = 1');
+    }
+
+    public function insertBaotaConfig(array $config): void
+    {
+        $this->execute(
+            'INSERT INTO baota_config(id,singleton_key,base_url,api_key_ciphertext,api_key_hint,secret_key_version,'
+            . 'expected_server_fingerprint,status,admin_state,verification_status,last_verified_at,'
+            . 'last_verification_attempt_at,last_verification_result_json,panel_version,capabilities_json,version,'
+            . 'created_by_user_id,updated_by_user_id,created_at,updated_at) '
+            . 'VALUES (?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $config['id'], $config['base_url'], $config['api_key_ciphertext'], $config['api_key_hint'],
+                $config['secret_key_version'], $config['expected_server_fingerprint'], $config['status'],
+                $config['admin_state'], $config['verification_status'], $config['last_verified_at'],
+                $config['last_verification_attempt_at'], $config['last_verification_result_json'],
+                $config['panel_version'], $config['capabilities_json'], $config['version'],
+                $config['created_by_user_id'], $config['updated_by_user_id'], $config['created_at'], $config['updated_at'],
+            ],
+        );
+    }
+
+    public function updateBaotaConfig(string $id, array $changes, int $expectedVersion): bool
+    {
+        $allowed = [
+            'base_url', 'api_key_ciphertext', 'api_key_hint', 'secret_key_version', 'expected_server_fingerprint',
+            'status', 'admin_state', 'verification_status', 'last_verified_at', 'last_verification_attempt_at',
+            'last_verification_result_json', 'panel_version', 'capabilities_json', 'updated_by_user_id', 'updated_at',
+        ];
+        $set = [];
+        $parameters = [];
+        foreach ($allowed as $column) {
+            if (array_key_exists($column, $changes)) {
+                $set[] = $column . ' = ?';
+                $parameters[] = $changes[$column];
+            }
+        }
+        if ($set === []) {
+            return false;
+        }
+        $parameters[] = $id;
+        $parameters[] = $expectedVersion;
+        return $this->execute(
+            'UPDATE baota_config SET ' . implode(',', $set) . ',version=version+1 WHERE id=? AND version=?',
+            $parameters,
+        )->rowCount() === 1;
     }
 
     public function insertAudit(array $audit): void

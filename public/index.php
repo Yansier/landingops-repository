@@ -13,6 +13,9 @@ use LandingOps\ControlPlane\Repository\PdoControlPlaneRepository;
 use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Security\AeadSecretCipher;
 use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
+use LandingOps\ControlPlane\Baota\BaotaReadOnlyClient;
+use LandingOps\ControlPlane\Service\BaotaConfigService;
+use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
@@ -136,6 +139,13 @@ try {
         $authorization,
         CloudflareDnsPrecheckService::confirmedIpv4FromEnvironment(),
     );
+    $baotaConfigs = new BaotaConfigService($repository, $secretCipher, $authorization);
+    $baotaReadOnly = new BaotaReadOnlyService(
+        $repository,
+        $baotaConfigs,
+        new BaotaReadOnlyClient(),
+        $authorization,
+    );
     $kernel = new ControlPlaneKernel(
         new SessionService($repository),
         new AccountService($repository, $authorization),
@@ -147,6 +157,8 @@ try {
         domains: $domains,
         cloudflareVerifications: $cloudflareVerifications,
         dnsPrechecks: $dnsPrechecks,
+        baotaConfigs: $baotaConfigs,
+        baotaReadOnly: $baotaReadOnly,
     );
 
     $response = $kernel->handle(new Request(

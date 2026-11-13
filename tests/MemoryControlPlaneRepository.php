@@ -39,6 +39,10 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
     public array $primaryDomains = [];
     /** @var array<string,array<string,mixed>|bool> */
     public array $domainGrants = [];
+    /** @var array<string,array<string,mixed>> */
+    public array $domainReservations = [];
+    /** @var array<string,mixed>|null */
+    public ?array $baotaConfig = null;
 
     public function transaction(callable $callback): mixed
     {
@@ -56,6 +60,8 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             $this->cloudflareZones,
             $this->primaryDomains,
             $this->domainGrants,
+            $this->domainReservations,
+            $this->baotaConfig,
         ]);
         try {
             return $callback();
@@ -74,6 +80,8 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 $this->cloudflareZones,
                 $this->primaryDomains,
                 $this->domainGrants,
+                $this->domainReservations,
+                $this->baotaConfig,
             ] = unserialize($snapshot, ['allowed_classes' => false]);
             throw $exception;
         }
@@ -223,6 +231,37 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
     public function findInstance(string $id, bool $forUpdate = false): ?array
     {
         return $this->instances[$id] ?? null;
+    }
+
+    public function findInstanceByNormalizedFqdn(string $normalizedFqdn): ?array
+    {
+        foreach ($this->instances as $instance) {
+            if (($instance['normalized_fqdn'] ?? null) === $normalizedFqdn) {
+                return $instance;
+            }
+        }
+        return null;
+    }
+
+    public function findInstanceBySitePathKey(string $sitePathKey): ?array
+    {
+        foreach ($this->instances as $instance) {
+            if (($instance['site_path_key'] ?? null) === $sitePathKey) {
+                return $instance;
+            }
+        }
+        return null;
+    }
+
+    public function hasActiveDomainReservation(string $normalizedFqdn): bool
+    {
+        foreach ($this->domainReservations as $reservation) {
+            if (($reservation['normalized_fqdn'] ?? null) === $normalizedFqdn
+                && in_array($reservation['status'] ?? null, ['held', 'committed'], true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public function updateInstanceOwner(string $instanceId, string $ownerId, int $expectedVersion, string $at): bool
@@ -676,6 +715,30 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         }
         $this->domainGrants[$key]['status'] = 'revoked';
         $this->domainGrants[$key]['revoked_at'] = $at;
+        return true;
+    }
+
+    public function findBaotaConfig(): ?array
+    {
+        return $this->baotaConfig;
+    }
+
+    public function insertBaotaConfig(array $config): void
+    {
+        if ($this->baotaConfig !== null) {
+            throw new RuntimeException('baota singleton conflict');
+        }
+        $this->baotaConfig = $config;
+    }
+
+    public function updateBaotaConfig(string $id, array $changes, int $expectedVersion): bool
+    {
+        if ($this->baotaConfig === null || ($this->baotaConfig['id'] ?? null) !== $id
+            || (int) ($this->baotaConfig['version'] ?? 0) !== $expectedVersion) {
+            return false;
+        }
+        $this->baotaConfig = array_replace($this->baotaConfig, $changes);
+        $this->baotaConfig['version'] = $expectedVersion + 1;
         return true;
     }
 

@@ -41,6 +41,7 @@ export interface Capabilities {
   transfer_owner: boolean
   manage_cloudflare: boolean
   manage_domains: boolean
+  manage_baota: boolean
 }
 
 export interface ValidationIssue { code: string; message: string; path: string | null }
@@ -167,6 +168,52 @@ export interface DnsPrecheckResult {
   issues: Array<{ code: string; record_id: string | null; message: string }>
   limitations: string[]
   message: string
+}
+
+export interface BaotaConfig {
+  id: string
+  base_url_hint: string
+  api_key_hint: string
+  status: string
+  admin_state: AdminState
+  verification_status: VerificationStatus
+  panel_version: string | null
+  capabilities: Record<string, string> | null
+  last_verified_at: string | null
+  last_verification_attempt_at: string | null
+  last_verification_result: Record<string, unknown> | null
+  version: number
+  created_at: string
+  updated_at: string
+}
+
+export interface BaotaSite {
+  external_id: number | null
+  name: string | null
+  path: string | null
+  normalized_path: string | null
+  status: string | null
+  metadata_complete: boolean
+  domains: string[]
+  domain_capability: string
+  php_capability: string
+  php_version: string | null
+  ownership: { classification: 'external'|'unverified'|'conflict'|'managed'; instance_id: string | null; reasons: string[] }
+}
+
+export interface BaotaPrecheck {
+  hostname: string
+  candidate_path: string | null
+  classification: 'clear'|'conflict'|'needs_attention'|'unsupported'
+  issues: Array<{ code: string; message: string; site_id: number | null }>
+  directory_observation: Record<string, unknown>
+  message: string
+}
+
+export interface BaotaIsolationResult {
+  checks: Array<{ key: string; status: string; message: string }>
+  php_deployment: { status: 'disabled'; message: string }
+  mutations_performed: false
 }
 
 export interface ApiEnvelope<T> { data: T; request_id: string }

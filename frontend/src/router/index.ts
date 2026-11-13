@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'templates', name: 'templates', component: () => import('@/views/TemplatesView.vue') },
         { path: 'domains', name: 'domains', component: () => import('@/views/DomainsView.vue') },
         { path: 'cloudflare', name: 'cloudflare', component: () => import('@/views/CloudflareConnectionsView.vue'), meta: { roles: ['super_admin'] } },
+        { path: 'baota', name: 'baota', component: () => import('@/views/BaotaServerView.vue'), meta: { roles: ['super_admin'] } },
         { path: 'teams', name: 'teams', component: () => import('@/views/TeamsView.vue'), meta: { roles: ['super_admin'] } },
         { path: 'users', name: 'users', component: () => import('@/views/UsersView.vue'), meta: { roles: ['super_admin', 'team_admin'] } },
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue') },
