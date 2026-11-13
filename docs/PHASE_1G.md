@@ -53,4 +53,6 @@ Phase 1G.1 收紧 `compatible`：每条精确同名记录必须同时满足 `typ
 
 真实 Cloudflare 联调不属于默认测试：必须由操作者明确授权并注入权限受限的测试 Token。本阶段不调用宝塔，不创建站点、DNS、SSL，不开发 Worker、多服务器、截图/预览或审核规避逻辑。
 
-本轮验收结果：PHP `72 passed, 0 failed`；83 个 PHP 文件语法检查无错误；Composer 严格校验通过；Vitest `6 files / 22 tests passed`；Vue TypeScript 与 Vite 构建通过；npm audit 为 0 个已知漏洞；本地浏览器已核验多 Zone 验证对话框没有默认选择，并能同时展示各 Zone 的管理员状态、验证状态、官方状态及证据上下文。本地 known_hosts 中的 ED25519 指纹已与操作者提供值核对一致，但验收时隧道状态仍为 `starting`、`127.0.0.1:13306` 没有活动监听且未取得本地 MySQL 安全凭据，真实 MariaDB 测试明确 SKIP，未连接任何数据库。未取得受限测试 Token 的显式授权，因此没有执行真实 Cloudflare 请求，所有第三方响应测试均为模拟。
+本轮验收结果：PHP `72 passed, 0 failed`；83 个 PHP 文件语法检查无错误；Composer 严格校验通过；Vitest `6 files / 22 tests passed`；Vue TypeScript 与 Vite 构建通过；npm audit 为 0 个已知漏洞；本地浏览器已核验多 Zone 验证对话框没有默认选择，并能同时展示各 Zone 的管理员状态、验证状态、官方状态及证据上下文。
+
+Phase 1G.1 最终数据库验收使用 Windows 原生 OpenSSH 建立 `127.0.0.1:13306` 回环隧道。本地固定 known_hosts 的 ED25519 指纹与操作者提供值一致；此前失败原因为凭据弹窗/AskPass 与 Codex 桌面宿主的交互交接失败，并非 SSH 端口、主机指纹或 MariaDB 转发故障。验收确认目标为 MariaDB `10.11.10-MariaDB-log`、当前数据库为 `landingops_test`，数据库账号只有全局 `USAGE` 与测试库权限。真实 PDO 流程通过 22 张业务表、002/003/004、CHECK/FK/UNIQUE、重复与失败迁移恢复、Session、模板上传授权、Cloudflare 密文回读、多 Zone 凭据上下文失效、域名授权及负责人事务转交。结束后再次断言 22 张业务表全部为空，迁移账本仅保留 001–004，随后关闭 SSH 隧道。未取得受限测试 Token 的显式授权，因此没有执行真实 Cloudflare 请求，所有第三方响应测试均为模拟。

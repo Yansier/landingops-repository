@@ -637,9 +637,22 @@ try {
             removeIntegrationTree($integrationStorageRoot);
         }
     }
+    foreach ($businessTables as $table) {
+        integrationAssert(
+            (int) $pdo->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn() === 0,
+            "测试结束后业务表 {$table} 仍有集成测试数据。",
+        );
+    }
+    $migrationVersions = $pdo->query('SELECT version FROM schema_migrations ORDER BY version')->fetchAll(PDO::FETCH_COLUMN);
+    integrationAssert($migrationVersions === [
+        '001_v1_control_plane',
+        '002_fix_active_key_null_constraints',
+        '003_split_cloudflare_admin_verification_state',
+        '004_bind_cloudflare_zone_verification_context',
+    ], '测试结束后正式迁移账本不完整或含有临时迁移记录。');
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
         . "；22 表、002/003/004、凭据上下文与多 Zone 失效、重复/失败迁移恢复、FK/CHECK/UNIQUE、"
-        . "PDO Session、负责人事务及单宝塔约束均通过。\n");
+        . "PDO Session、负责人事务、单宝塔约束及测试数据清理均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')
         . $exception->getMessage() . PHP_EOL);
