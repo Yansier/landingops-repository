@@ -311,7 +311,10 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
 
     public function findTemplateVersionDetail(string $templateVersionId, ?string $teamId): ?array
     {
-        $sql = 'SELECT tv.id, tv.validation_status, tv.validation_report_json FROM template_versions tv '
+        $sql = 'SELECT tv.id,tv.template_id,tv.version,tv.standard_version,tv.zip_sha256,tv.manifest_json,'
+            . 'tv.config_schema_json,tv.capability_tags_json,tv.validation_status,tv.validation_report_json,'
+            . 't.slug,t.name AS template_name,t.status AS template_status,t.owner_team_id '
+            . 'FROM template_versions tv '
             . "JOIN templates t ON t.id = tv.template_id WHERE tv.id = ? AND t.status = 'active'";
         $parameters = [$templateVersionId];
         if ($teamId !== null) {

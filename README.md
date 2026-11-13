@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1H（宝塔只读连接与站点隔离预检查）**。V1 只登记一台宝塔，使用固定 origin 与官方文档确认的只读动作发现系统、站点、绑定域名和 PHP 元数据。所有既有站点默认视为外部资源；不会创建、认领或修改网站、文件、Nginx、PHP-FPM、SSL 或 DNS。
+> 当前状态：**Phase 1I（单站创建预演与部署计划）**。用户可从当前授权范围选择不可变模板版本和主域名，按 LTS v1.0 Schema 编辑配置并生成结构化 Dry Run。预演会重新读取服务端权限与资源状态，但不会创建实例、预留、任务、DNS、宝塔站点、SSL 或生产文件。
 
 ## 最重要的边界
 
@@ -32,6 +32,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1F 域名资源](docs/PHASE_1F.md) | Cloudflare 连接密文、Zone/主域名、团队授权与页面说明 |
 | [Phase 1G 只读验证](docs/PHASE_1G.md) | Cloudflare Token/Zone/DNS Read 验证、DNS 预检查和安全边界 |
 | [Phase 1H 宝塔只读预检查](docs/PHASE_1H.md) | 单宝塔密文配置、官方只读白名单、外部站点保护和隔离能力检查 |
+| [Phase 1I 单站部署预演](docs/PHASE_1I.md) | 四步向导、Schema 表单、服务端 Dry Run、读预算与零写入部署计划 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -58,7 +59,7 @@ examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)。
 
 ## 安全提示
 

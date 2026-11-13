@@ -13,6 +13,7 @@ const router = createRouter({
       path: '/', component: AdminLayout, meta: { requiresAuth: true }, children: [
         { path: '', name: 'dashboard', component: () => import('@/views/DashboardView.vue') },
         { path: 'instances', name: 'instances', component: () => import('@/views/InstancesView.vue') },
+        { path: 'instances/new', name: 'instance-dry-run', component: () => import('@/views/SiteDryRunWizardView.vue') },
         { path: 'templates', name: 'templates', component: () => import('@/views/TemplatesView.vue') },
         { path: 'domains', name: 'domains', component: () => import('@/views/DomainsView.vue') },
         { path: 'cloudflare', name: 'cloudflare', component: () => import('@/views/CloudflareConnectionsView.vue'), meta: { roles: ['super_admin'] } },

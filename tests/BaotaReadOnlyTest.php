@@ -57,6 +57,10 @@ final class FakeBaotaGateway implements BaotaReadOnlyGateway
     public array $domains = [];
     /** @var array<string,mixed> */
     public array $directory = ['status' => 'unsupported', 'path' => null, 'entry_count' => null, 'has_unknown_entries' => null, 'is_symlink' => null];
+    public bool $inventoryComplete = true;
+    public int $domainCalls = 0;
+    /** @var list<int> */
+    public array $failingDomainIds = [];
 
     public function systemSummary(string $baseUrl, string $apiKey): array
     {
@@ -68,8 +72,20 @@ final class FakeBaotaGateway implements BaotaReadOnlyGateway
         return $this->siteRows;
     }
 
+    public function siteInventory(string $baseUrl, string $apiKey): array
+    {
+        return [
+            'sites' => $this->siteRows, 'complete' => $this->inventoryComplete,
+            'pages' => 1, 'reason' => $this->inventoryComplete ? null : 'synthetic_incomplete', 'site_limit' => 200,
+        ];
+    }
+
     public function siteDomains(string $baseUrl, string $apiKey, int $siteId): array
     {
+        $this->domainCalls++;
+        if (in_array($siteId, $this->failingDomainIds, true)) {
+            throw new ApiException(502, 'baota_timeout', 'synthetic timeout');
+        }
         return $this->domains[$siteId] ?? ['status' => 'unsupported', 'domains' => []];
     }
 
@@ -153,6 +169,24 @@ return [
         putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
     },
 
+    'baota pagination failure returns an explicitly incomplete inventory' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $firstPage = [];
+        for ($i = 1; $i <= 100; $i++) {
+            $firstPage[] = ['id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}"];
+        }
+        $client = new BaotaReadOnlyClient(new FakeBaotaTransport(
+            baotaResponse(200, ['data' => $firstPage]),
+            new BaotaTransportException('timeout'),
+            new BaotaTransportException('timeout'),
+        ), static fn (): int => 1700000000, static function (int $microseconds): void {});
+        $inventory = $client->siteInventory('https://panel.example.test:8888', 'synthetic-secret');
+        TestHarness::assertFalse($inventory['complete']);
+        TestHarness::assertSame('pagination_failed', $inventory['reason']);
+        TestHarness::assertSame(100, count($inventory['sites']));
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
     'baota singleton config encrypts rotates and preserves explicit disabled state' => static function (): void {
         [$repository, $p, $configs] = baotaFixture();
         $created = $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'first-secret-key'], 'req-create');
@@ -195,8 +229,9 @@ return [
         $gateway->domains[7] = ['status' => 'supported', 'domains' => ['legacy.example.test', 'alias.example.test']];
         $service = new BaotaReadOnlyService($repository, $configs, $gateway);
         $service->verify($p[SUPER_ID], 1, 'req-verify');
-        $sites = $service->sites($p[SUPER_ID]);
-        TestHarness::assertSame('external', $sites[0]['ownership']['classification']);
+        $discovery = $service->sites($p[SUPER_ID]);
+        TestHarness::assertSame('external', $discovery['sites'][0]['ownership']['classification']);
+        TestHarness::assertTrue($discovery['inventory']['complete']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
         $conflict = $service->precheck($p[SUPER_ID], 'alias.example.test');
         TestHarness::assertSame('conflict', $conflict['classification']);
@@ -204,6 +239,48 @@ return [
         $symlink = $service->precheck($p[SUPER_ID], 'new.example.test');
         TestHarness::assertSame('conflict', $symlink['classification']);
         TestHarness::assertSame('disabled', $service->isolation($p[SUPER_ID])['php_deployment']['status']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota discovery enforces detail budget and marks large or incomplete results' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 45; $i++) {
+            $gateway->siteRows[] = [
+                'external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}",
+                'status' => '1', 'metadata_complete' => true,
+            ];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $discovery = $service->sites($p[SUPER_ID]);
+        TestHarness::assertSame(20, $gateway->domainCalls);
+        TestHarness::assertFalse($discovery['inventory']['complete']);
+        TestHarness::assertSame('detail_budget_exhausted', $discovery['inventory']['reason']);
+        TestHarness::assertSame('budget_exhausted', $discovery['sites'][44]['domain_capability']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        TestHarness::assertSame('unsupported', $service->precheck($p[SUPER_ID], 'unused.example.test')['classification']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota domain detail failure cannot produce a clear precheck' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        $gateway->siteRows = [[
+            'external_id' => 7, 'name' => 'legacy.example.test', 'path' => '/www/wwwroot/legacy',
+            'status' => '1', 'metadata_complete' => true,
+        ]];
+        $gateway->failingDomainIds = [7];
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        $result = $service->precheck($p[SUPER_ID], 'unused.example.test');
+        TestHarness::assertSame('unsupported', $result['classification']);
+        TestHarness::assertFalse($result['inventory']['complete']);
+        TestHarness::assertSame('detail_query_failed', $result['inventory']['reason']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT');
     },
 

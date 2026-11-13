@@ -2,19 +2,20 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ApiError } from '@/services/api'
 import { getBaotaConfig, getBaotaIsolation, listBaotaSites, precheckBaota, saveBaotaConfig, verifyBaota } from '@/services/resources'
-import type { BaotaConfig, BaotaIsolationResult, BaotaPrecheck, BaotaSite } from '@/types/api'
+import type { BaotaConfig, BaotaInventory, BaotaIsolationResult, BaotaPrecheck, BaotaSite } from '@/types/api'
 import IconBase from '@/components/IconBase.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import PageState from '@/components/PageState.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 
 const config=ref<BaotaConfig|null>(null),sites=ref<BaotaSite[]>([]),isolation=ref<BaotaIsolationResult|null>(null)
+const inventory=ref<BaotaInventory|null>(null)
 const loading=ref(true),error=ref(''),notice=ref(''),open=ref(false),busy=ref(false),formError=ref('')
 const hostname=ref(''),precheck=ref<BaotaPrecheck|null>(null),precheckBusy=ref(false)
 const form=reactive({base_url:'',api_key:''})
 const message=(e:unknown)=>e instanceof ApiError?e.message:'操作失败，请稍后重试。'
 
-async function load(){loading.value=true;error.value='';try{config.value=await getBaotaConfig();sites.value=[];isolation.value=null;if(config.value?.verification_status==='valid'&&config.value.admin_state==='enabled'){const results=await Promise.allSettled([listBaotaSites(),getBaotaIsolation()]);if(results[0].status==='fulfilled')sites.value=results[0].value;if(results[1].status==='fulfilled')isolation.value=results[1].value}}catch(e){error.value=message(e)}finally{loading.value=false}}
+async function load(){loading.value=true;error.value='';try{config.value=await getBaotaConfig();sites.value=[];inventory.value=null;isolation.value=null;if(config.value?.verification_status==='valid'&&config.value.admin_state==='enabled'){const results=await Promise.allSettled([listBaotaSites(),getBaotaIsolation()]);if(results[0].status==='fulfilled'){sites.value=results[0].value.sites;inventory.value=results[0].value.inventory}if(results[1].status==='fulfilled')isolation.value=results[1].value}}catch(e){error.value=message(e)}finally{loading.value=false}}
 function edit(){Object.assign(form,{base_url:'',api_key:''});formError.value='';open.value=true}
 async function save(){busy.value=true;formError.value='';try{const payload:{base_url?:string;api_key?:string;expected_version?:number}={};if(form.base_url)payload.base_url=form.base_url;if(form.api_key)payload.api_key=form.api_key;if(config.value)payload.expected_version=config.value.version;config.value=await saveBaotaConfig(payload);notice.value=config.value.version===1?'已登记唯一宝塔连接，尚未验证。':'连接已更新；地址或 API Key 变化会重置验证状态。';open.value=false;await load()}catch(e){formError.value=message(e)}finally{busy.value=false}}
 async function setState(state:'enabled'|'disabled'){if(!config.value||!confirm(`${state==='disabled'?'停用':'重新启用'}宝塔只读连接？`))return;try{config.value=await saveBaotaConfig({admin_state:state,expected_version:config.value.version});notice.value=state==='disabled'?'连接已停用；未修改任何站点。':'连接已重新启用，必要时请重新验证。';await load()}catch(e){error.value=message(e)}}
@@ -24,6 +25,7 @@ onMounted(load)
 </script>
 
 <template>
+  <div v-if="inventory&&!inventory.complete" class="alert alert-neutral page-alert">站点清单不完整：{{inventory.reason||'只读证据不足'}}。详情查询 {{inventory.detail_queries_used}} / {{inventory.detail_query_budget}}，不能据此宣称无冲突。</div>
   <div class="page-header"><div><span class="eyebrow">Read-only protection</span><h1>宝塔服务器</h1><p>只读识别单台服务器、既有站点和冲突；不会创建、认领或修改网站。</p></div><button class="btn btn-primary" @click="edit"><IconBase name="server"/>{{config?'编辑连接':'登记连接'}}</button></div>
   <div v-if="notice" class="alert alert-success page-alert">{{notice}}</div>
   <PageState :loading="loading" :error="error" :empty="false" @retry="load">

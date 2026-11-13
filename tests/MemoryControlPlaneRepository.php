@@ -379,10 +379,17 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         if ($version === null || ($version['validation_status'] ?? null) !== 'valid') {
             return null;
         }
+        $template = $this->templates[(string) ($version['template_id'] ?? '')] ?? null;
+        if ($template === null || ($template['status'] ?? null) !== 'active') {
+            return null;
+        }
         if ($teamId !== null && !$this->hasTemplateGrant($templateVersionId, $teamId)) {
             return null;
         }
-        return $version;
+        return $version + [
+            'slug' => $template['slug'], 'template_name' => $template['name'],
+            'template_status' => $template['status'], 'owner_team_id' => $template['owner_team_id'],
+        ];
     }
 
     public function listTemplateGrants(string $templateVersionId): array

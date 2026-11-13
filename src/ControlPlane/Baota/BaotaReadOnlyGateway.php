@@ -10,6 +10,8 @@ interface BaotaReadOnlyGateway
     public function systemSummary(string $baseUrl, string $apiKey): array;
     /** @return list<array<string,mixed>> */
     public function sites(string $baseUrl, string $apiKey): array;
+    /** @return array{sites:list<array<string,mixed>>,complete:bool,pages:int,reason:?string,site_limit:int} */
+    public function siteInventory(string $baseUrl, string $apiKey): array;
     /** @return array<string,mixed> */
     public function siteDomains(string $baseUrl, string $apiKey, int $siteId): array;
     /** @return array<string,mixed> */

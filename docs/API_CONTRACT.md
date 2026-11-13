@@ -231,3 +231,29 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 
 当前控制面列表端点暂不实现客户端游标翻页；返回固定 `has_more=false`。宝塔适配器内部按官方 `getData` 分页读取并设置安全上限。所有宝塔写操作仍不属于当前 API。
 
+# Phase 1I 单站预演接口补充
+
+## 模板配置表单
+
+`GET /api/v1/template-versions/{version_id}/config-form` 对三个有效角色开放，但只返回当前用户有权使用且验证有效的不可变模板版本。响应字段由受验证的 LTS v1.0 `config.schema.json` 生成，包含 `schema_hash` 与叶子字段的 `path`、类型、约束、必填、nullable 和 `public|private` 可见性。接口不返回实例配置值；私有字段可以由授权用户填写，但只能进入未来私有配置，不能进入公开 JavaScript 投影。
+
+## 创建部署预演
+
+`POST /api/v1/deployment-dry-runs` 需要 Cookie Session 与 CSRF。请求只接受：
+
+```json
+{
+  "template_version_id": "01...",
+  "primary_domain_id": "01...",
+  "subdomain_prefix": "offer",
+  "config": {}
+}
+```
+
+服务端忽略且不信任客户端团队、模板所有者、授权或状态推断。处理时重新读取用户状态、模板与团队授权、主域名授权、连接与 Zone 当前凭据上下文、实例、活动预留、模板 manifest 和 Schema。配置错误以预演 `blockers` 返回；资源不存在或授权失效使用 404，资源存在但上游验证状态不可用使用 409，输入形状错误使用 400/422。
+
+成功响应包含 `status=blocked|needs_attention|ready`、固定模板版本、规范化 FQDN、不含值的配置校验摘要、宝塔/DNS 只读检查摘要，以及 DNS、宝塔、构建、SSL、原子发布的结构化计划。所有步骤均为 `execute=false`，并固定返回 `dry_run=true`、`mutations_performed=false`。Dry Run 不写入 `instances`、`domain_reservations`、`deployment_jobs` 或 `job_steps`，也不构成未来正式提交许可。
+
+## 宝塔清单完整性
+
+`GET /api/v1/settings/baota/sites` 的 `data` 从列表改为 `{sites, inventory}`。`inventory.complete=false` 时同时给出 `reason`、分页数量、站点上限、详情预算、已用详情次数和失败数。任何基于不完整清单的“未发现占用”只能返回 `unsupported` 或 `needs_attention`，不能返回 clear。

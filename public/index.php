@@ -20,6 +20,7 @@ use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
+use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
@@ -159,6 +160,7 @@ try {
         dnsPrechecks: $dnsPrechecks,
         baotaConfigs: $baotaConfigs,
         baotaReadOnly: $baotaReadOnly,
+        dryRuns: new DeploymentDryRunService($repository, $baotaReadOnly, $authorization),
     );
 
     $response = $kernel->handle(new Request(

@@ -1,5 +1,5 @@
 import { api, apiList, jsonBody } from './api'
-import type { BaotaConfig, BaotaIsolationResult, BaotaPrecheck, BaotaSite, CloudflareConnection, CloudflareZone, DnsPrecheckResult, Instance, ManagedTemplate, PrimaryDomain, Team, TemplateUploadResult, User } from '@/types/api'
+import type { BaotaConfig, BaotaIsolationResult, BaotaPrecheck, BaotaSiteDiscovery, CloudflareConnection, CloudflareZone, ConfigFormContract, DeploymentDryRun, DnsPrecheckResult, Instance, ManagedTemplate, PrimaryDomain, Team, TemplateUploadResult, User } from '@/types/api'
 
 export const listTeams = () => apiList<Team>('/api/v1/teams')
 export const createTeam = (input: { name: string; slug: string }) =>
@@ -20,6 +20,7 @@ export const transferOwner = (instanceId: string, input: {
 })
 
 export const listTemplates = () => apiList<ManagedTemplate>('/api/v1/templates')
+export const getTemplateConfigForm = (versionId: string) => api<ConfigFormContract>(`/api/v1/template-versions/${versionId}/config-form`)
 export const uploadTemplate = (file: File) => {
   const body = new FormData()
   body.append('template_zip', file, file.name)
@@ -63,7 +64,9 @@ export const saveBaotaConfig = (input: { base_url?: string; api_key?: string; ad
   api<BaotaConfig>('/api/v1/settings/baota', { method: 'PUT', body: jsonBody(input) })
 export const verifyBaota = (expectedVersion: number) =>
   api<{ config: BaotaConfig; result: Record<string, unknown> }>('/api/v1/settings/baota/verifications', { method: 'POST', body: jsonBody({ expected_version: expectedVersion }) })
-export const listBaotaSites = () => apiList<BaotaSite>('/api/v1/settings/baota/sites')
+export const listBaotaSites = () => api<BaotaSiteDiscovery>('/api/v1/settings/baota/sites')
 export const precheckBaota = (hostname: string) =>
   api<BaotaPrecheck>('/api/v1/settings/baota/prechecks', { method: 'POST', body: jsonBody({ hostname }) })
 export const getBaotaIsolation = () => api<BaotaIsolationResult>('/api/v1/settings/baota/isolation-checks')
+export const createDeploymentDryRun = (input: { template_version_id: string; primary_domain_id: string; subdomain_prefix: string; config: Record<string, unknown> }) =>
+  api<DeploymentDryRun>('/api/v1/deployment-dry-runs', { method: 'POST', body: jsonBody(input) })

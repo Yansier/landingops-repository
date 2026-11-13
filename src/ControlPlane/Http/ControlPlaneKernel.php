@@ -15,6 +15,7 @@ use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
+use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
@@ -40,6 +41,7 @@ final class ControlPlaneKernel
         private readonly ?CloudflareDnsPrecheckService $dnsPrechecks = null,
         private readonly ?BaotaConfigService $baotaConfigs = null,
         private readonly ?BaotaReadOnlyService $baotaReadOnly = null,
+        private readonly ?DeploymentDryRunService $dryRuns = null,
     ) {
     }
 
@@ -208,6 +210,15 @@ final class ControlPlaneKernel
         ) {
             return $this->success($this->templateManagement()->validation($principal, $matches[1]), $requestId);
         }
+        if ($method === 'GET'
+            && preg_match('~^/api/v1/template-versions/([0-9A-HJKMNP-TV-Z]{26})/config-form$~D', $path, $matches) === 1
+        ) {
+            return $this->success($this->dryRunManagement()->configForm($principal, $matches[1]), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/deployment-dry-runs') {
+            $this->csrf($request, $session);
+            return $this->success($this->dryRunManagement()->run($principal, $request->body), $requestId);
+        }
         if ($method === 'POST'
             && preg_match('~^/api/v1/template-versions/([0-9A-HJKMNP-TV-Z]{26})/grants$~D', $path, $matches) === 1
         ) {
@@ -321,7 +332,7 @@ final class ControlPlaneKernel
             ), $requestId);
         }
         if ($method === 'GET' && $path === '/api/v1/settings/baota/sites') {
-            return $this->list($this->baotaReadOnlyManagement()->sites($principal), $requestId);
+            return $this->success($this->baotaReadOnlyManagement()->sites($principal), $requestId);
         }
         if ($method === 'POST' && $path === '/api/v1/settings/baota/prechecks') {
             $this->csrf($request, $session);
@@ -408,6 +419,14 @@ final class ControlPlaneKernel
             throw new ApiException(501, 'not_implemented', '模板管理服务尚未配置。');
         }
         return $this->templates;
+    }
+
+    private function dryRunManagement(): DeploymentDryRunService
+    {
+        if ($this->dryRuns === null) {
+            throw new ApiException(501, 'not_implemented', '部署预演服务尚未配置。');
+        }
+        return $this->dryRuns;
     }
 
     private function grantManagement(): TemplateGrantService

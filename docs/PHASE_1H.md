@@ -18,7 +18,7 @@
 | `/site` | `GetPHPVersion` | 读取 PHP 版本清单 |
 | `/site` | `GetSitePHPVersion` | 按站点名称读取 PHP 版本 |
 
-签名使用官方双 MD5 约定，POST body 为 form-urlencoded。适配器没有任意 URL、路径、action 或 table 参数入口；重定向关闭，单次超时 5 秒，响应上限 1 MiB，网络错误、429 和 5xx 最多重试一次。站点分页每页 100、最多 20 页，业务发现再限制为最多 200 个站点，避免一次管理员请求形成无界负载。
+签名使用官方双 MD5 约定，POST body 为 form-urlencoded。适配器没有任意 URL、路径、action 或 table 参数入口；重定向关闭，单次超时 5 秒，响应上限 1 MiB，网络错误、429 和 5xx 最多重试一次。Phase 1I 将连接验证与站点发现统一为每页 100、最多 3 个分页请求且最多保留 200 个站点；每次发现最多再发起 20 个绑定域名详情请求，不再逐站同步查询 PHP。达到站点、分页或详情预算，以及分页/详情失败时返回 `complete=false` 和原因，冲突预检查不得宣称 clear。
 
 官方参考：<https://docs.bt.cn/api/>、<https://docs.bt.cn/api/system/actions/>、<https://docs.bt.cn/api/data/getdata>、<https://docs.bt.cn/api/site/getsitedomains>、<https://docs.bt.cn/api/site/getphpversion>、<https://docs.bt.cn/api/site/getsitephpversion>。文档与面板版本可能变化，因此真实环境仍必须单独验证；不存在的能力标记为 `unsupported`，不会猜测端点。
 
@@ -57,7 +57,7 @@
 | `GET /api/v1/settings/baota` | 总管理员 | 返回单例脱敏配置或 `null` |
 | `PUT /api/v1/settings/baota` | 总管理员 + CSRF | 创建、轮换、显式启停；更新要求 `expected_version` |
 | `POST /api/v1/settings/baota/verifications` | 总管理员 + CSRF | 对当前启用凭据执行固定只读白名单检查 |
-| `GET /api/v1/settings/baota/sites` | 总管理员 | 返回只读发现清单及外部所有权判断 |
+| `GET /api/v1/settings/baota/sites` | 总管理员 | 返回 `{sites, inventory}`；inventory 声明分页、详情预算和完整性 |
 | `POST /api/v1/settings/baota/prechecks` | 总管理员 + CSRF | 检查候选 `hostname` 的已知冲突 |
 | `GET /api/v1/settings/baota/isolation-checks` | 总管理员 | 返回隔离能力与 PHP 部署禁用结论 |
 

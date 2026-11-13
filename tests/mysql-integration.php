@@ -16,6 +16,7 @@ use LandingOps\ControlPlane\Security\AeadSecretCipher;
 use LandingOps\ControlPlane\Service\BaotaConfigService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
+use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
 use LandingOps\ControlPlane\Service\TemplateGrantService;
@@ -89,6 +90,38 @@ function showCreateTable(PDO $pdo, string $table): string
 {
     $row = $pdo->query("SHOW CREATE TABLE `{$table}`")->fetch(PDO::FETCH_ASSOC);
     return is_array($row) ? (string) array_values($row)[1] : '';
+}
+
+function cleanupStaleTestConnections(PDO $pdo, string $currentUser): int
+{
+    $account = explode('@', $currentUser, 2)[0];
+    $currentId = (int) $pdo->query('SELECT CONNECTION_ID()')->fetchColumn();
+    $processes = $pdo->query('SHOW PROCESSLIST')->fetchAll(PDO::FETCH_ASSOC);
+    $threadIds = [];
+    foreach ($processes as $process) {
+        $threadId = (int) ($process['Id'] ?? 0);
+        if ($threadId !== $currentId
+            && ($process['User'] ?? null) === $account
+            && ($process['db'] ?? null) === 'landingops_test'
+            && ($process['Command'] ?? null) === 'Sleep'
+            && (int) ($process['Time'] ?? 0) >= 60
+        ) {
+            $threadIds[] = $threadId;
+        }
+    }
+    if ($threadIds === []) {
+        return 0;
+    }
+    if (getenv('LANDINGOPS_TEST_CLEAN_STALE_TRANSACTIONS') !== 'I_UNDERSTAND') {
+        throw new RuntimeException(
+            '发现专用测试账号遗留的休眠连接：' . implode(',', $threadIds)
+            . '。仅可通过安全测试脚本显式启用清理。',
+        );
+    }
+    foreach ($threadIds as $threadId) {
+        $pdo->exec('KILL CONNECTION ' . $threadId);
+    }
+    return count($threadIds);
 }
 
 function verifyMigrationRecovery(PDO $pdo, MigrationRunner $runner): void
@@ -169,6 +202,7 @@ if (!in_array($host, ['127.0.0.1', 'localhost', '::1'], true)
 
 try {
     $connectionSummary = null;
+    $stage = 'connect';
     $pdo = (new PdoFactory())->connect(new DatabaseConfig($dsn, $user, $password));
     integrationAssert((string) $pdo->query('SELECT DATABASE()')->fetchColumn() === 'landingops_test', '当前数据库不是 landingops_test。');
     $currentUser = (string) $pdo->query('SELECT CURRENT_USER()')->fetchColumn();
@@ -185,6 +219,11 @@ try {
     $version = (string) $pdo->query('SELECT VERSION()')->fetchColumn();
     $connectionSummary = 'server=' . $version . ', database=landingops_test, account=' . $currentUser;
     fwrite(STDOUT, 'INFO: ' . $connectionSummary . "，权限范围检查通过。\n");
+    $cleanedConnections = cleanupStaleTestConnections($pdo, $currentUser);
+    if ($cleanedConnections > 0) {
+        fwrite(STDOUT, 'INFO: 已关闭 ' . $cleanedConnections . " 个同账号、同测试库且休眠超过 60 秒的遗留连接。\n");
+    }
+    $stage = 'migrations-and-schema';
     $numericVersion = preg_replace('/[^0-9.].*$/', '', $version) ?: '0';
     $isMariaDb = stripos($version, 'mariadb') !== false;
     $minimumVersion = $isMariaDb ? '10.6.0' : '8.0.0';
@@ -315,6 +354,7 @@ try {
     $configVersionId = $ids->generate();
 
     $integrationStorageRoot = null;
+    $stage = 'business-fixtures-and-constraints';
     $pdo->beginTransaction();
     try {
         $insertTeam = $pdo->prepare(
@@ -476,6 +516,7 @@ try {
             'expired', $now, $now, $now, null,
         ]);
 
+        $stage = 'session-and-owner-transfer';
         $super = Principal::fromRow($repository->findUserById($superId) ?? []);
         $adminA = Principal::fromRow($repository->findUserById($adminAId) ?? []);
         $sessions = new SessionService($repository);
@@ -516,6 +557,7 @@ try {
         $templateAccess->assertTemplateVersion($adminA, $teamA, $templateVersionId);
 
         // Phase 1E/1F：通过真实 PDO 仓储执行完整 ZIP 上传、版本入库、默认授权与授权生命周期。
+        $stage = 'template-upload-and-grants';
         $integrationStorageRoot = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'landingops-mysql-template-' . bin2hex(random_bytes(6));
         if (!mkdir($integrationStorageRoot, 0700, true) && !is_dir($integrationStorageRoot)) {
             throw new RuntimeException('无法创建 PDO 模板集成测试目录。');
@@ -551,6 +593,7 @@ try {
         integrationAssert(count($templateManagement->list($adminA)) >= 1, '重新授权后模板未恢复可见。');
 
         // Phase 1F：真实 PDO 上验证密文、连接/Zone/主域名关联及团队授权。
+        $stage = 'cloudflare-domain-and-context';
         $key = random_bytes(32);
         $cipher = new AeadSecretCipher(['mysql-v1' => $key], 'mysql-v1');
         $connectionService = new CloudflareConnectionService($repository, $cipher, new AuthorizationService());
@@ -632,6 +675,38 @@ try {
         $domainService->grant($super, (string) $managedDomain['id'], $teamA, 'mysql-domain-regrant');
         integrationAssert(count($domainService->listDomains($adminA)) >= 1, '主域名重新授权失败。');
 
+        integrationAssert($repository->updateCloudflareConnection((string) $managedConnection['id'], [
+            'verification_status' => 'valid', 'status' => 'active', 'last_verified_at' => $now,
+            'updated_at' => $now,
+        ], 5), 'Dry Run 前无法建立当前连接验证证据。');
+        integrationAssert($repository->updateCloudflareZone((string) $managedZone['id'], [
+            'verification_status' => 'valid',
+            'verified_credential_context_version' => (int) $managedConnection['credential_context_version'],
+            'cloudflare_status' => 'active', 'status' => 'active', 'updated_at' => $now,
+        ], 3), 'Dry Run 前无法建立当前 Zone 验证证据。');
+        $stage = 'deployment-dry-run';
+        $dryRunBefore = [
+            (int) $pdo->query('SELECT COUNT(*) FROM instances')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM deployment_jobs')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM job_steps')->fetchColumn(),
+        ];
+        $dryRun = (new DeploymentDryRunService($repository))->run($adminA, [
+            'template_version_id' => (string) $uploaded['template_version_id'],
+            'primary_domain_id' => (string) $managedDomain['id'],
+            'subdomain_prefix' => 'dry-run',
+            'config' => json_decode(json_encode(\LandingOps\Tests\FixtureFactory::sampleConfig(), JSON_THROW_ON_ERROR), true, 128, JSON_THROW_ON_ERROR),
+        ]);
+        integrationAssert($dryRun['dry_run'] === true && $dryRun['mutations_performed'] === false, '真实 PDO Dry Run 错误地报告外部写入。');
+        integrationAssert($dryRun['configuration']['valid'] === true, '真实 PDO Dry Run 配置校验失败。');
+        integrationAssert($dryRunBefore === [
+            (int) $pdo->query('SELECT COUNT(*) FROM instances')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM domain_reservations')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM deployment_jobs')->fetchColumn(),
+            (int) $pdo->query('SELECT COUNT(*) FROM job_steps')->fetchColumn(),
+        ], '真实 PDO Dry Run 写入了实例、预留或部署任务。');
+
+        $stage = 'baota-singleton-and-secret';
         $baotaService = new BaotaConfigService($repository, $cipher, new AuthorizationService());
         $baotaSecret = 'mysql-baota-key-' . bin2hex(random_bytes(8));
         $managedBaota = $baotaService->save($super, [
@@ -670,6 +745,7 @@ try {
             removeIntegrationTree($integrationStorageRoot);
         }
     }
+    $stage = 'rollback-and-cleanup-verification';
     foreach ($businessTables as $table) {
         integrationAssert(
             (int) $pdo->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn() === 0,
@@ -685,10 +761,11 @@ try {
         '005_baota_readonly_precheck',
     ], '测试结束后正式迁移账本不完整或含有临时迁移记录。');
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
-        . "；22 表、002/003/004/005、凭据上下文、多 Zone 失效、宝塔密文轮换、重复/失败迁移恢复、"
+        . "；22 表、002/003/004/005、凭据上下文、多 Zone 失效、部署预演零写入、宝塔密文轮换、重复/失败迁移恢复、"
         . "FK/CHECK/UNIQUE、PDO Session、负责人事务、单宝塔约束及测试数据清理均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')
-        . $exception->getMessage() . PHP_EOL);
+        . 'stage=' . $stage . '；' . $exception::class . '；' . $exception->getMessage()
+        . '；at=' . basename($exception->getFile()) . ':' . $exception->getLine() . PHP_EOL);
     exit(1);
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureApi } from './api'
-import { createCloudflareConnection, createPrimaryDomain, createUser, disableUser, grantPrimaryDomain, grantTemplate, listInstances, precheckBaota, precheckDomainDns, revokePrimaryDomainGrant, revokeTemplateGrant, saveBaotaConfig, transferOwner, updateCloudflareConnection, uploadTemplate, verifyBaota, verifyCloudflareConnection } from './resources'
+import { createCloudflareConnection, createDeploymentDryRun, createPrimaryDomain, createUser, disableUser, getTemplateConfigForm, grantPrimaryDomain, grantTemplate, listInstances, precheckBaota, precheckDomainDns, revokePrimaryDomainGrant, revokeTemplateGrant, saveBaotaConfig, transferOwner, updateCloudflareConnection, uploadTemplate, verifyBaota, verifyCloudflareConnection } from './resources'
 
 const ok=(data:unknown)=>new Response(JSON.stringify({data,request_id:'req'}),{status:200,headers:{'Content-Type':'application/json'}})
 describe('业务请求契约',()=>{
@@ -69,5 +69,16 @@ describe('业务请求契约',()=>{
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({expected_version:3})
     expect(fetchMock.mock.calls[2][0]).toBe('/api/v1/settings/baota/prechecks')
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({hostname:'page.example.test'})
+  })
+  it('部署预演固定模板版本且不提交团队或推断状态',async()=>{
+    fetchMock.mockImplementation(()=>Promise.resolve(ok({status:'needs_attention'})))
+    await getTemplateConfigForm('version-id')
+    await createDeploymentDryRun({template_version_id:'version-id',primary_domain_id:'domain-id',subdomain_prefix:'offer',config:{private_note:'private'}})
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/template-versions/version-id/config-form')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/deployment-dry-runs')
+    const body=JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(body).toEqual({template_version_id:'version-id',primary_domain_id:'domain-id',subdomain_prefix:'offer',config:{private_note:'private'}})
+    expect(body).not.toHaveProperty('team_id')
+    expect(body).not.toHaveProperty('status')
   })
 })

@@ -200,6 +200,18 @@ export interface BaotaSite {
   php_version: string | null
   ownership: { classification: 'external'|'unverified'|'conflict'|'managed'; instance_id: string | null; reasons: string[] }
 }
+export interface BaotaInventory {
+  complete: boolean
+  listing_complete: boolean
+  details_complete: boolean
+  reason: string | null
+  pages: number
+  site_limit: number
+  detail_query_budget: number
+  detail_queries_used: number
+  detail_failures: number
+}
+export interface BaotaSiteDiscovery { sites: BaotaSite[]; inventory: BaotaInventory }
 
 export interface BaotaPrecheck {
   hostname: string
@@ -214,6 +226,41 @@ export interface BaotaIsolationResult {
   checks: Array<{ key: string; status: string; message: string }>
   php_deployment: { status: 'disabled'; message: string }
   mutations_performed: false
+}
+
+export interface ConfigFormField {
+  path: string
+  label: string
+  description?: string
+  type: 'string'|'number'|'integer'|'boolean'|'array'
+  item_type?: string
+  required: boolean
+  nullable: boolean
+  visibility: 'public'|'private'
+  format?: string
+  pattern?: string
+  minimum?: number
+  maximum?: number
+  min_length?: number
+  max_length?: number
+  min_items?: number
+  max_items?: number
+  enum?: unknown[]
+}
+export interface ConfigFormContract { template_version_id: string; schema_hash: string; fields: ConfigFormField[] }
+export interface DryRunIssue { code: string; message: string }
+export interface DeploymentDryRun {
+  status: 'blocked'|'needs_attention'|'ready'
+  dry_run: true
+  mutations_performed: false
+  template: { id: string; slug: string; name: string; version_id: string; version: string; zip_sha256: string }
+  domain: { primary_domain_id: string; fqdn: string; authorization: 'valid' }
+  configuration: { valid: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[]; schema_hash: string; submitted_field_count: number; values_returned: false }
+  external_checks: { baota: Record<string, unknown>; dns: Record<string, unknown> }
+  plan: { target_path: string | null; steps: Array<{ order: number; kind: string; action: string; execute: false }>; dns: Record<string, unknown>; baota: Record<string, unknown>; files: Record<string, unknown>; ssl: Record<string, unknown> }
+  blockers: DryRunIssue[]
+  risks: DryRunIssue[]
+  disclaimer: string
 }
 
 export interface ApiEnvelope<T> { data: T; request_id: string }

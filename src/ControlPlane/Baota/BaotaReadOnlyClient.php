@@ -9,6 +9,9 @@ use LandingOps\ControlPlane\Exception\ApiException;
 
 final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
 {
+    public const SITE_LIMIT = 200;
+    private const PAGE_SIZE = 100;
+    private const PAGE_REQUEST_BUDGET = 3;
     /** @var Closure():int */
     private readonly Closure $time;
     /** @var Closure(int):void */
@@ -35,18 +38,39 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
 
     public function sites(string $baseUrl, string $apiKey): array
     {
+        return $this->siteInventory($baseUrl, $apiKey)['sites'];
+    }
+
+    public function siteInventory(string $baseUrl, string $apiKey): array
+    {
         $sites = [];
-        for ($page = 1; $page <= 20; $page++) {
-            $payload = $this->request($baseUrl, $apiKey, '/data', [
-                'action' => 'getData', 'table' => 'sites', 'type' => '-1', 'p' => $page, 'limit' => 100,
-            ]);
+        $pages = 0;
+        for ($page = 1; $page <= self::PAGE_REQUEST_BUDGET; $page++) {
+            try {
+                $payload = $this->request($baseUrl, $apiKey, '/data', [
+                    'action' => 'getData', 'table' => 'sites', 'type' => '-1', 'p' => $page,
+                    'limit' => self::PAGE_SIZE, 'list' => 'true',
+                ]);
+            } catch (ApiException $exception) {
+                if ($page === 1) {
+                    throw $exception;
+                }
+                return self::inventory($sites, false, $pages, 'pagination_failed');
+            }
+            $pages++;
             $rows = $payload['data'] ?? null;
             if (!is_array($rows) || !array_is_list($rows)) {
-                throw new ApiException(502, 'baota_response_invalid', '宝塔站点列表响应格式无效。');
+                if ($page === 1) {
+                    throw new ApiException(502, 'baota_response_invalid', '宝塔站点列表响应格式无效。');
+                }
+                return self::inventory($sites, false, $pages, 'pagination_response_invalid');
             }
             foreach ($rows as $row) {
                 if (!is_array($row)) {
-                    throw new ApiException(502, 'baota_response_invalid', '宝塔站点记录格式无效。');
+                    return self::inventory($sites, false, $pages, 'site_record_invalid');
+                }
+                if (count($sites) >= self::SITE_LIMIT) {
+                    return self::inventory($sites, false, $pages, 'site_limit_reached');
                 }
                 $id = is_int($row['id'] ?? null) ? $row['id'] : (ctype_digit((string) ($row['id'] ?? '')) ? (int) $row['id'] : null);
                 $sites[] = [
@@ -57,11 +81,11 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
                     'metadata_complete' => $id !== null && is_string($row['name'] ?? null) && is_string($row['path'] ?? null),
                 ];
             }
-            if (count($rows) < 100) {
-                return $sites;
+            if (count($rows) < self::PAGE_SIZE) {
+                return self::inventory($sites, true, $pages, null);
             }
         }
-        throw new ApiException(502, 'baota_site_result_incomplete', '宝塔站点列表超过安全分页上限。');
+        return self::inventory($sites, false, $pages, 'pagination_budget_exhausted');
     }
 
     public function siteDomains(string $baseUrl, string $apiKey, int $siteId): array
@@ -181,5 +205,14 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
             return $payload;
         }
         throw new ApiException(502, 'baota_unavailable', '宝塔 API 暂时不可用。', [], true);
+    }
+
+    /** @param list<array<string,mixed>> $sites @return array{sites:list<array<string,mixed>>,complete:bool,pages:int,reason:?string,site_limit:int} */
+    private static function inventory(array $sites, bool $complete, int $pages, ?string $reason): array
+    {
+        return [
+            'sites' => $sites, 'complete' => $complete, 'pages' => $pages,
+            'reason' => $reason, 'site_limit' => self::SITE_LIMIT,
+        ];
     }
 }

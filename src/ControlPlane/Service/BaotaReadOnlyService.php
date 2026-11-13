@@ -17,6 +17,7 @@ use LandingOps\ControlPlane\Support\UtcClock;
 
 final class BaotaReadOnlyService
 {
+    private const DETAIL_QUERY_BUDGET = 20;
     private readonly AuditLogger $audit;
 
     public function __construct(
@@ -44,12 +45,12 @@ final class BaotaReadOnlyService
         try {
             $key = $this->configs->decryptApiKey($config);
             $system = $this->gateway->systemSummary((string) $config['base_url'], $key);
-            $sites = $this->gateway->sites((string) $config['base_url'], $key);
+            $inventory = $this->gateway->siteInventory((string) $config['base_url'], $key);
             $php = $this->gateway->phpVersions((string) $config['base_url'], $key);
             $capabilities = [
                 'system_summary' => 'supported',
                 'panel_version' => $system['version_status'] ?? 'unsupported',
-                'site_list' => 'supported',
+                'site_list' => ($inventory['complete'] ?? false) ? 'supported' : 'incomplete',
                 'site_domains' => 'supported_by_official_api_not_sampled',
                 'php_versions' => $php['status'] ?? 'unsupported',
                 'site_php_version' => 'supported_by_official_api_not_sampled',
@@ -60,7 +61,10 @@ final class BaotaReadOnlyService
             $result = [
                 'status' => 'valid', 'code' => 'readonly_checks_passed',
                 'panel_version' => $system['panel_version'] ?? null,
-                'site_count' => count($sites), 'checked_at' => $now,
+                'site_count' => count($inventory['sites'] ?? []),
+                'inventory_complete' => (bool) ($inventory['complete'] ?? false),
+                'inventory_reason' => $inventory['reason'] ?? null,
+                'checked_at' => $now,
             ];
             $changes = [
                 'verification_status' => 'valid', 'status' => 'active', 'last_verified_at' => $now,
@@ -97,7 +101,7 @@ final class BaotaReadOnlyService
         }
     }
 
-    /** @return list<array<string,mixed>> */
+    /** @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>} */
     public function sites(Principal $actor): array
     {
         [$config, $key] = $this->credentials($actor);
@@ -109,11 +113,49 @@ final class BaotaReadOnlyService
     {
         $hostname = self::hostname($hostname);
         [$config, $key] = $this->credentials($actor);
-        $sites = $this->discoverSites($config, $key);
+        return $this->precheckWithCredentials($hostname, $config, $key);
+    }
+
+    /** @return array<string,mixed> */
+    public function precheckForDeployment(string $hostname): array
+    {
+        $hostname = self::hostname($hostname);
+        $config = $this->repository->findBaotaConfig();
+        if ($config === null || ($config['admin_state'] ?? null) !== 'enabled'
+            || ($config['verification_status'] ?? null) !== 'valid'
+        ) {
+            return [
+                'hostname' => $hostname, 'candidate_path' => BaotaPath::candidateRoot($hostname),
+                'classification' => 'needs_attention',
+                'issues' => [['code' => 'baota_not_verified', 'message' => '宝塔连接未启用或未通过当前凭据验证。', 'site_id' => null]],
+                'directory_observation' => ['status' => 'unsupported'],
+                'message' => '无法完成宝塔只读预检查，正式提交前必须重新验证。',
+                'mutations_performed' => false,
+            ];
+        }
+        try {
+            return $this->precheckWithCredentials($hostname, $config, $this->configs->decryptApiKey($config));
+        } catch (ApiException $exception) {
+            return [
+                'hostname' => $hostname, 'candidate_path' => BaotaPath::candidateRoot($hostname),
+                'classification' => 'needs_attention',
+                'issues' => [['code' => $exception->errorCode, 'message' => '宝塔只读预检查未能完成。', 'site_id' => null]],
+                'directory_observation' => ['status' => 'unsupported'],
+                'message' => '外部只读证据不完整，正式提交前必须重新检查。',
+                'mutations_performed' => false,
+            ];
+        }
+    }
+
+    /** @param array<string,mixed> $config @return array<string,mixed> */
+    private function precheckWithCredentials(string $hostname, array $config, string $key): array
+    {
+        $discovery = $this->discoverSites($config, $key);
+        $sites = $discovery['sites'];
         $candidatePath = BaotaPath::candidateRoot($hostname);
         $issues = [];
         $knownConflict = false;
-        $siteMetadataUnsupported = false;
+        $siteMetadataUnsupported = !($discovery['inventory']['complete'] ?? false);
         foreach ($sites as $site) {
             if (($site['metadata_complete'] ?? false) !== true || ($site['domain_capability'] ?? null) !== 'supported') {
                 $siteMetadataUnsupported = true;
@@ -184,6 +226,8 @@ final class BaotaReadOnlyService
                 'unsupported' => '目标面板未提供完成预检查所需的只读信息。',
                 default => '现有只读证据不足，需要人工检查。',
             },
+            'inventory' => $discovery['inventory'],
+            'mutations_performed' => false,
         ];
     }
 
@@ -191,9 +235,10 @@ final class BaotaReadOnlyService
     public function isolation(Principal $actor): array
     {
         [$config, $key] = $this->credentials($actor);
-        $sites = $this->discoverSites($config, $key);
+        $discovery = $this->discoverSites($config, $key);
+        $sites = $discovery['sites'];
         $paths = [];
-        $pathSafe = $sites !== [];
+        $pathSafe = $sites !== [] && ($discovery['inventory']['complete'] ?? false) === true;
         foreach ($sites as $site) {
             if (!is_string($site['normalized_path'] ?? null) || in_array($site['normalized_path'], $paths, true)) {
                 $pathSafe = false;
@@ -217,25 +262,27 @@ final class BaotaReadOnlyService
         ];
     }
 
-    /** @param array<string,mixed> $config @return list<array<string,mixed>> */
+    /** @param array<string,mixed> $config @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>} */
     private function discoverSites(array $config, string $key): array
     {
-        $rows = $this->gateway->sites((string) $config['base_url'], $key);
-        if (count($rows) > 200) {
-            throw new ApiException(502, 'baota_site_result_too_large', '站点数量超过单次安全发现上限。');
-        }
+        $inventory = $this->gateway->siteInventory((string) $config['base_url'], $key);
+        $rows = is_array($inventory['sites'] ?? null) ? $inventory['sites'] : [];
         $instances = $this->repository->listInstances(null, null);
         $result = [];
+        $detailQueries = 0;
+        $detailFailures = 0;
         foreach ($rows as $row) {
             $domains = [];
-            $domainStatus = 'unsupported';
-            if (is_int($row['external_id'] ?? null)) {
+            $domainStatus = 'budget_exhausted';
+            if (is_int($row['external_id'] ?? null) && $detailQueries < self::DETAIL_QUERY_BUDGET) {
+                $detailQueries++;
                 try {
                     $domainResult = $this->gateway->siteDomains((string) $config['base_url'], $key, $row['external_id']);
                     $domains = is_array($domainResult['domains'] ?? null) ? $domainResult['domains'] : [];
                     $domainStatus = (string) ($domainResult['status'] ?? 'unsupported');
                 } catch (ApiException) {
-                    $domainStatus = 'unsupported';
+                    $domainStatus = 'incomplete';
+                    $detailFailures++;
                 }
             }
             if (is_string($row['name'] ?? null) && !in_array($row['name'], $domains, true)) {
@@ -249,24 +296,33 @@ final class BaotaReadOnlyService
                     $normalizedPath = null;
                 }
             }
-            $php = ['status' => 'unsupported', 'php_version' => null];
-            if (is_string($row['name'] ?? null)) {
-                try {
-                    $php = $this->gateway->sitePhpVersion((string) $config['base_url'], $key, $row['name']);
-                } catch (ApiException) {
-                    $php = ['status' => 'unsupported', 'php_version' => null];
-                }
-            }
             $site = array_merge($row, [
                 'domains' => array_values(array_unique(array_map('strval', $domains))),
                 'domain_capability' => $domainStatus, 'normalized_path' => $normalizedPath,
-                'php_capability' => $php['status'] ?? 'unsupported', 'php_version' => $php['php_version'] ?? null,
+                'php_capability' => 'not_queried', 'php_version' => null,
                 'ownership_marker_hash' => null,
             ]);
             $site['ownership'] = $this->ownership->evaluate($site, $instances);
             $result[] = $site;
         }
-        return $result;
+        $detailsComplete = count($rows) <= self::DETAIL_QUERY_BUDGET && $detailFailures === 0;
+        return [
+            'sites' => $result,
+            'inventory' => [
+                'complete' => (bool) ($inventory['complete'] ?? false) && $detailsComplete,
+                'listing_complete' => (bool) ($inventory['complete'] ?? false),
+                'listing_reason' => $inventory['reason'] ?? null,
+                'pages' => (int) ($inventory['pages'] ?? 0),
+                'site_limit' => (int) ($inventory['site_limit'] ?? 200),
+                'detail_query_budget' => self::DETAIL_QUERY_BUDGET,
+                'detail_queries_used' => $detailQueries,
+                'detail_failures' => $detailFailures,
+                'details_complete' => $detailsComplete,
+                'reason' => !($inventory['complete'] ?? false)
+                    ? ($inventory['reason'] ?? 'listing_incomplete')
+                    : (!$detailsComplete ? ($detailFailures > 0 ? 'detail_query_failed' : 'detail_budget_exhausted') : null),
+            ],
+        ];
     }
 
     /** @return array{0:array<string,mixed>,1:string} */
