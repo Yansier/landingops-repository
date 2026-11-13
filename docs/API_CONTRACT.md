@@ -1,0 +1,190 @@
+# LandingOps 控制面 API 契约草案
+
+## 1. 目的
+
+本文固定 Phase 1B 的资源、授权、并发和错误语义，不包含 PHP 实现，也不是第三方宝塔/Cloudflare 端点声明。第三方调用只能由后端适配器执行。
+
+建议前缀 `/api/v1`，JSON 使用 UTF-8、`snake_case`；时间为 UTC RFC 3339；资源 ID 为不可枚举 UUID/ULID。生产只允许 HTTPS。
+
+## 2. 通用约定
+
+### 2.1 认证与授权
+
+- 管理端通过安全 Cookie 会话或 Phase 1B 明确选择的等价机制认证；若使用 Cookie，所有写操作具备 CSRF 防护。
+- 每个端点在后端依次校验：身份状态、角色、团队范围、资源所有权/负责人、资源状态和操作权限。
+- Cloudflare Token、宝塔 API Key、后台密码哈希、供应商密钥永不进入响应。
+- 资源不存在与无权访问可统一返回 404，降低跨团队枚举风险；安全审计保留真实原因。
+
+### 2.2 请求关联与幂等
+
+- 客户端可传 `X-Request-Id`，服务端验证格式或自行生成并在响应中返回。
+- 创建实例、批次和重试等写操作要求 `Idempotency-Key`。同一操作者、端点和 key 在有效期内：相同请求摘要返回原结果；不同摘要返回 409。
+- `PUT/PATCH` 的可变资源使用 `version` 或 `expected_revision` 做乐观锁，不接受无条件最后写入获胜。
+
+### 2.3 分页与过滤
+
+列表使用不透明游标：`?limit=50&after=<cursor>`，默认 50、最大 100。响应：
+
+```json
+{
+  "data": [],
+  "page": {"next_cursor": null, "has_more": false},
+  "request_id": "request-example"
+}
+```
+
+过滤字段采用白名单；排序字段由端点定义，不能把任意列名直接拼入 SQL。
+
+### 2.4 错误格式
+
+```json
+{
+  "error": {
+    "code": "config_revision_conflict",
+    "message": "配置已被其他来源更新，请重新加载。",
+    "details": {"current_revision": 8},
+    "retryable": false
+  },
+  "request_id": "request-example"
+}
+```
+
+常用状态：400 请求格式、401 未认证、403 无权限、404 不存在/隐藏资源、409 冲突、422 业务/schema 校验、429 限流、503 暂不可用。错误不返回堆栈、文件路径、SQL、Token 或第三方原始敏感响应。
+
+## 3. 身份、团队与用户
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| `GET /me` | 已登录 | 返回本人、角色、团队和安全能力摘要 |
+| `GET /teams` | 总管理员 | 分页列出团队 |
+| `POST /teams` | 总管理员 | 创建团队 |
+| `PATCH /teams/{id}` | 总管理员 | 按 `version` 修改状态/名称 |
+| `GET /users` | 总管理员/团队管理员 | 全部或本团队范围 |
+| `POST /users` | 总管理员/团队管理员 | 创建范围内用户；团队管理员只能创建本团队员工 |
+| `PATCH /users/{id}` | 范围内管理员 | 修改资料/状态，不允许越权提升角色 |
+
+角色不是客户端可自由提交的信任字段。团队管理员请求中的 `team_id` 应由服务端绑定或强制等于其团队。
+
+## 4. 模板与授权
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| `GET /templates` | 所有角色 | 只返回有权查看的元数据与能力；无视觉预览字段 |
+| `POST /templates/uploads` | 总/团队管理员 | multipart 上传 ZIP，先进入私有暂存并异步/同步验证 |
+| `GET /template-versions/{id}/validation` | 有权查看者 | 返回脱敏验证报告 |
+| `POST /template-versions/{id}/grants` | 总管理员 | 授权一个团队 |
+| `DELETE /template-versions/{id}/grants/{team_id}` | 总管理员 | 撤销未来使用权，不操作实例 |
+
+上传响应必须包含版本 ID、SHA-256 和验证状态。相同 `slug + version` 不同哈希返回 `409 template_version_immutable`。
+
+## 5. 连接、Zone 与主域名
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| `GET/PUT /settings/baota` | 总管理员 | 读取脱敏状态/创建或轮换唯一配置；不得创建第二条 |
+| `GET /cloudflare-connections` | 总管理员 | 返回 label、token_hint、状态，不返回密文 |
+| `POST /cloudflare-connections` | 总管理员 | 保存加密 Token；验证与保存应分阶段报告 |
+| `PATCH /cloudflare-connections/{id}` | 总管理员 | 轮换 Token/停用，带 version |
+| `POST /cloudflare-connections/{id}/zones/import` | 总管理员 | 导入明确 Zone；阻止重复规范化名称 |
+| `GET /primary-domains` | 所有角色 | 自动限制到有权使用的主域名 |
+| `POST /primary-domains/{id}/grants` | 总管理员 | 授权团队 |
+| `DELETE /primary-domains/{id}/grants/{team_id}` | 总管理员 | 撤销未来创建权限，不改 DNS/实例 |
+
+任意连接“测试”操作必须有 SSRF 防护、超时、限流和脱敏日志。员工不能提交 connection ID 来改变 Zone 路由。
+
+## 6. 实例与部署
+
+### 6.1 创建单站
+
+`POST /instances`，要求 `Idempotency-Key`。示例请求仅使用保留示例域名：
+
+```json
+{
+  "team_id": "team-example",
+  "template_version_id": "template-version-example",
+  "primary_domain_id": "domain-example",
+  "subdomain_prefix": "campaign-a",
+  "owner_user_id": "user-example",
+  "native_admin": {"enabled": false},
+  "config": {
+    "pixel_ids": [],
+    "events": {
+      "download": {"enabled": true},
+      "add_to_cart": {"enabled": false, "value": 1, "currency": "USD"},
+      "purchase": {"enabled": false, "value": 1, "currency": "USD"}
+    },
+    "links": {"download_url": "https://downloads.example.test/app", "redirect_url": null},
+    "custom": {}
+  }
+}
+```
+
+服务端从主域名计算并规范化 FQDN，不能接受客户端提交最终路径、宝塔地址或 Cloudflare 连接。成功返回 202，包括 `instance_id`、`job_id`、`status=queued`；冲突/校验失败前不产生残留预留。
+
+### 6.2 批量
+
+- `POST /deployment-batches/validate`：纯验证，逐行给出规范化结果和错误，不持有域名。
+- `POST /deployment-batches`：要求幂等 key，为有效行各建一个实例/任务；响应 202。
+- `GET /deployment-batches/{id}`：聚合统计和子任务游标。
+
+验证结果可能在确认前过期；正式提交必须重新做权限和唯一预留，不能依赖前端预检。
+
+### 6.3 查询与任务操作
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| `GET /instances` | 角色范围 | 总管理员全部、团队管理员本团队、员工本人负责 |
+| `GET /instances/{id}` | 资源范围 | 返回实例、配置摘要和当前任务，不返回密钥 |
+| `GET /jobs/{id}` | 资源范围 | 返回步骤、尝试、脱敏错误与人工提示 |
+| `POST /jobs/{id}/retry` | 资源范围+安全状态 | 创建/唤醒重试，不重置成功步骤证据 |
+| `POST /jobs/{id}/cancel` | 资源范围+安全状态 | 请求协作取消；返回 202，不承诺即时完成 |
+| `POST /instances/{id}/verify` | 有权管理者 | 创建验证任务，不同步长轮询第三方 |
+
+重试/取消请求不得直接让 Web 进程调用外部 API。
+
+## 7. 配置与负责人
+
+### 7.1 配置
+
+- `GET /instances/{id}/config`：返回 schema 允许的安全配置、`revision`、`content_hash`、`source`。
+- `PUT /instances/{id}/config`：请求包含 `expected_revision`、完整 `config`、可选 `reason`；成功可返回 202（异步发布任务）或在已定义的短本地写路径中返回 200，Phase 1B 应统一选择一种。建议 202 以保留任务审计。
+
+版本不符返回 409 和当前 revision；不能自动合并事件/链接或覆盖原生后台更新。响应不包含后台密码哈希。
+
+### 7.2 负责人转交
+
+`POST /instances/{id}/owner-transfers`：
+
+```json
+{
+  "to_user_id": "user-example",
+  "expected_instance_version": 4,
+  "reason": "项目交接"
+}
+```
+
+后端校验同团队启用用户，事务内更新负责人、追加历史和审计；创建人不变。员工无权调用。
+
+## 8. 备用页与供应商组件元数据
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| `POST /backup-page-assets` | 总管理员 | 上传普通 HTML，私有保存、校验、不可变版本化 |
+| `GET /backup-page-assets` | 总管理员 | 元数据列表，无截图字段 |
+| `POST /vendor-component-versions` | 总管理员 | 上传独立组件，安全扫描后登记版本 |
+| `GET /vendor-component-versions` | 总管理员 | 只返回版本/哈希/PHP 约束/状态 |
+
+上传疑似凭据时返回阻断错误，错误细节只说明位置类别，不回显内容。
+
+## 9. 审计
+
+`GET /audit-logs` 按角色自动限定范围，支持资源、动作、时间游标过滤。审计为只读、追加写，不提供普通 API 更新/删除。响应对配置值和网络标识做脱敏，且不暴露第三方原始请求/响应。
+
+## 10. 明确不提供的接口
+
+- 任意服务器列表、服务器池、为实例选择宝塔服务器。
+- 直接代理站点访客流量或让站点运行时读取控制面配置。
+- 接管/覆盖/删除未知宝塔站点或任意现有 DNS 的通用接口。
+- 模板截图、预览、缩略图生成或独立预览服务。
+- 审核规避、按检测人员身份分流或随机隐藏文件的接口。
+

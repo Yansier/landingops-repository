@@ -1,0 +1,57 @@
+{
+  "standard": "landingops-template",
+  "standard_version": "1.0",
+  "template": {
+    "slug": "sample-download-page",
+    "name": "示例下载页",
+    "version": "1.0.0",
+    "description": "仅用于说明 LTS v1.0 字段，不包含生产地址或凭据。"
+  },
+  "entry": {
+    "source": "index.html",
+    "asset_base": "./"
+  },
+  "runtime": {
+    "php": {
+      "required": true,
+      "constraint": ">=8.1 <9.0"
+    },
+    "vendor_component": {
+      "required": false,
+      "compatibility": null
+    }
+  },
+  "capabilities": {
+    "configurable": true,
+    "pixel_ids": {
+      "multiple": true,
+      "max_items": 10
+    },
+    "events": [
+      "Download",
+      "AddToCart",
+      "Purchase"
+    ],
+    "links": {
+      "download": true,
+      "redirect": true
+    },
+    "custom_config": true
+  },
+  "native_admin": {
+    "supported": true,
+    "entry": "admin/index.php",
+    "auth": "local_password",
+    "default_enabled": false,
+    "config_contract": "lts-local-config/1.0"
+  },
+  "config": {
+    "schema": "config.schema.json",
+    "local_path": ".landingops/config.json",
+    "schema_version": "1.0.0"
+  },
+  "integrity": {
+    "algorithm": "sha256"
+  }
+}
+
