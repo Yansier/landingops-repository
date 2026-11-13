@@ -1,6 +1,10 @@
 /vendor/
 /.tools/
 /build/
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+/frontend/coverage/
 /.env
 /.env.local
 /.env.mysql-test.local

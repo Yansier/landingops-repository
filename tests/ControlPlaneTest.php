@@ -357,6 +357,10 @@ return [
         preg_match('/landingops_session=([^;]+)/', $login->headers['Set-Cookie'], $matches);
         $cookie = rawurldecode($matches[1]);
         $csrf = $login->body['data']['csrf_token'];
+        $me = $kernel->handle(new Request('GET', '/api/v1/me', [], [ControlPlaneKernel::COOKIE => $cookie]));
+        TestHarness::assertSame(200, $me->status);
+        $refreshedCsrf = $me->body['data']['csrf_token'];
+        TestHarness::assertTrue(is_string($refreshedCsrf) && $refreshedCsrf !== $csrf);
         $forged = $kernel->handle(new Request('POST', '/api/v1/users', [], [ControlPlaneKernel::COOKIE => $cookie], [
             'email' => 'api@example.test',
             'display_name' => 'API Staff',
@@ -369,8 +373,13 @@ return [
         $future = $kernel->handle(new Request('GET', '/api/v1/templates', [], [ControlPlaneKernel::COOKIE => $cookie]));
         TestHarness::assertSame(501, $future->status);
         TestHarness::assertSame('not_implemented', $future->body['error']['code']);
-        $logout = $kernel->handle(new Request('POST', '/api/v1/logout', [
+        $staleLogout = $kernel->handle(new Request('POST', '/api/v1/logout', [
             'X-CSRF-Token' => $csrf,
+        ], [ControlPlaneKernel::COOKIE => $cookie]));
+        TestHarness::assertSame(403, $staleLogout->status);
+        TestHarness::assertSame('csrf_invalid', $staleLogout->body['error']['code']);
+        $logout = $kernel->handle(new Request('POST', '/api/v1/logout', [
+            'X-CSRF-Token' => $refreshedCsrf,
         ], [ControlPlaneKernel::COOKIE => $cookie]));
         TestHarness::assertSame(200, $logout->status);
     },

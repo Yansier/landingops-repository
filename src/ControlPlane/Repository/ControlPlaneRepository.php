@@ -30,6 +30,7 @@ interface ControlPlaneRepository
     public function insertSession(array $session): void;
     /** @return array<string,mixed>|null */
     public function findSessionByHash(string $tokenHash): ?array;
+    public function updateSessionCsrf(string $sessionId, string $csrfHash, string $at): void;
     public function revokeSession(string $sessionId, string $reason, string $at): void;
     public function revokeUserSessions(string $userId, string $reason, string $at): void;
     /** @return list<array<string,mixed>> */

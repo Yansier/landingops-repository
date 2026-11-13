@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1C.1（权限修复与 MySQL 集成验收）**。在 Phase 1C 基础上，模板使用权已改为完全依赖服务端授权记录，所有权不能绕过撤销；仓库同时提供受限于 `landingops_test` 的 MySQL 验收套件和 SSH 隧道脚本。仍不包含 Vue 管理界面、生产发布 Worker 或真实宝塔/Cloudflare 调用。
+> 当前状态：**Phase 1D（Vue 3 管理后台第一版）**。已提供登录、角色化仪表盘、团队、用户、实例负责人转交和个人设置界面，并直接使用现有 PHP `/api/v1`。仍不包含实例创建、模板/域名业务、生产发布 Worker 或真实宝塔/Cloudflare 调用。
 
 ## 最重要的边界
 
@@ -27,6 +27,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [API 契约](docs/API_CONTRACT.md) | 控制面接口、幂等、并发与错误语义 |
 | [Phase 1B 本地运行](docs/PHASE_1B.md) | 离线验证、示例打包、实例构建与测试命令 |
 | [Phase 1C 本地运行](docs/PHASE_1C.md) | MySQL 迁移、总管理员初始化、API、权限边界与测试说明 |
+| [Phase 1D 前端说明](docs/PHASE_1D.md) | Vue 3 管理后台、CSRF 恢复、本地启动与测试说明 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -44,6 +45,7 @@ Phase 1B 实现时应将“备用页面版本”作为受审计的管理员资�
 
 ```text
 src/                   # Phase 1B 离线核心 + Phase 1C 控制面核心
+frontend/              # Phase 1D Vue 3 / Vite / TypeScript 管理后台
 database/migrations/   # MySQL 8 / MariaDB 10.6+ 版本化迁移
 public/index.php       # Phase 1C JSON API 前端控制器
 bin/landingops         # validate / package-sample / build CLI
@@ -52,7 +54,7 @@ examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)。
 
 ## 安全提示
 

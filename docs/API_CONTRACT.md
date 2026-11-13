@@ -10,7 +10,8 @@
 
 ### 2.1 认证与授权
 
-- Phase 1C 管理端使用服务端 Cookie Session；Cookie 为 `Secure + HttpOnly + SameSite=Strict`，所有已登录写操作必须同时提交 `X-CSRF-Token`。
+- 管理端使用服务端 Cookie Session；Cookie 为 `Secure + HttpOnly + SameSite=Strict`，所有已登录写操作必须同时提交 `X-CSRF-Token`。Phase 1D 前端只在运行内存保存 Token，不写入 Local Storage、Session Storage 或 Cookie。
+- `GET /me` 在鉴权成功后轮换 Session 的 CSRF Token，并在响应中返回新值，供页面刷新后恢复。新值生效后旧 Token 立即失效；同一 Session 的并行标签页需要重新调用 `/me` 获取当前 Token。
 - 每个端点在后端依次校验：身份状态、角色、团队范围、资源所有权/负责人、资源状态和操作权限。
 - Cloudflare Token、宝塔 API Key、后台密码哈希、供应商密钥永不进入响应。
 - 资源不存在与无权访问可统一返回 404，降低跨团队枚举风险；安全审计保留真实原因。
@@ -201,7 +202,7 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 
 | 方法与路径 | Phase 1C 状态 |
 | --- | --- |
-| `POST /login`、`POST /logout`、`GET /me` | 已实现；登录响应仅返回安全用户字段、CSRF Token 和过期时间 |
+| `POST /login`、`POST /logout`、`GET /me` | 已实现；登录返回安全用户字段、CSRF Token 和过期时间；`GET /me` 返回身份、能力并轮换 CSRF Token |
 | `PATCH /me/profile`、`POST /me/password` | 已实现；改密后撤销该用户全部 Session |
 | `GET/POST /teams` | 已实现；仅总管理员 |
 | `GET/POST /users`、`PATCH /users/{id}` | 已实现查询、创建和停用；团队管理员只能操作本团队员工 |

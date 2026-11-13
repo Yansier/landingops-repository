@@ -91,6 +91,7 @@ final class ControlPlaneKernel
             return $this->success([
                 'user' => $principal->safeArray(),
                 'capabilities' => self::capabilities($principal),
+                'csrf_token' => $this->sessions->refreshCsrf($session),
             ], $requestId);
         }
         if ($method === 'PATCH' && $path === '/api/v1/me/profile') {

@@ -138,6 +138,18 @@ final class SessionService
         }
     }
 
+    /** @param array<string,mixed> $session */
+    public function refreshCsrf(array $session): string
+    {
+        $sessionId = $session['session_id'] ?? null;
+        if (!is_string($sessionId) || $sessionId === '') {
+            throw new ApiException(401, 'session_invalid', '会话无效或已过期。');
+        }
+        $token = self::token();
+        $this->repository->updateSessionCsrf($sessionId, self::hashToken($token), $this->clock->sql());
+        return $token;
+    }
+
     public function logout(string $sessionId, Principal $actor, string $requestId = 'authentication'): void
     {
         $this->repository->transaction(function () use ($sessionId, $actor, $requestId): void {

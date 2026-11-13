@@ -171,6 +171,14 @@ final class MemoryControlPlaneRepository implements ControlPlaneRepository
         return null;
     }
 
+    public function updateSessionCsrf(string $sessionId, string $csrfHash, string $at): void
+    {
+        if (isset($this->sessions[$sessionId]) && $this->sessions[$sessionId]['revoked_at'] === null) {
+            $this->sessions[$sessionId]['csrf_hash'] = $csrfHash;
+            $this->sessions[$sessionId]['last_seen_at'] = $at;
+        }
+    }
+
     public function revokeSession(string $sessionId, string $reason, string $at): void
     {
         if (isset($this->sessions[$sessionId]) && $this->sessions[$sessionId]['revoked_at'] === null) {

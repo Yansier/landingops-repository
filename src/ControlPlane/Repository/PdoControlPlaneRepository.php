@@ -139,6 +139,14 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         );
     }
 
+    public function updateSessionCsrf(string $sessionId, string $csrfHash, string $at): void
+    {
+        $this->execute(
+            'UPDATE auth_sessions SET csrf_hash = ?, last_seen_at = ? WHERE id = ? AND revoked_at IS NULL',
+            [$csrfHash, $at, $sessionId],
+        );
+    }
+
     public function revokeSession(string $sessionId, string $reason, string $at): void
     {
         $this->execute(

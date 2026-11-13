@@ -1,0 +1,25 @@
+{
+  "name": "landingops-admin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "pinia": "^3.0.3",
+    "vue": "^3.5.22",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@types/node": "^22.18.10",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.10",
+    "vitest": "^5.1.0",
+    "vue-tsc": "^3.1.1"
+  }
+}
