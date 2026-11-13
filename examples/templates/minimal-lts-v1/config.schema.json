@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:landingops:template:minimal-static-download:config:1.0.0",
+  "title": "Minimal static template configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pixel_ids", "events", "links", "custom", "private_note"],
+  "properties": {
+    "pixel_ids": {
+      "type": "array",
+      "x-landingops-visibility": "public",
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{1,64}$"
+      }
+    },
+    "events": {
+      "type": "object",
+      "x-landingops-visibility": "public",
+      "additionalProperties": false,
+      "required": ["download", "add_to_cart", "purchase"],
+      "properties": {
+        "download": {"$ref": "#/$defs/toggle"},
+        "add_to_cart": {"$ref": "#/$defs/moneyEvent"},
+        "purchase": {"$ref": "#/$defs/moneyEvent"}
+      }
+    },
+    "links": {
+      "type": "object",
+      "x-landingops-visibility": "public",
+      "additionalProperties": false,
+      "required": ["download_url", "redirect_url"],
+      "properties": {
+        "download_url": {"$ref": "#/$defs/nullableHttpsUrl"},
+        "redirect_url": {"$ref": "#/$defs/nullableHttpsUrl"}
+      }
+    },
+    "custom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headline"],
+      "properties": {
+        "headline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "x-landingops-visibility": "public"
+        }
+      }
+    },
+    "private_note": {
+      "type": "string",
+      "maxLength": 200,
+      "x-landingops-visibility": "private"
+    }
+  },
+  "$defs": {
+    "toggle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"}
+      }
+    },
+    "moneyEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "value", "currency"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "value": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      }
+    },
+    "nullableHttpsUrl": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "format": "uri", "pattern": "^https://"}
+      ]
+    }
+  }
+}

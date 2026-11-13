@@ -1,0 +1,94 @@
+<?php
+
+declare(strict_types=1);
+
+use LandingOps\Contract\Json;
+use LandingOps\Exception\ValidationException;
+use LandingOps\Instance\OfflineInstanceBuilder;
+use LandingOps\Template\TemplatePackager;
+use LandingOps\Template\TemplateValidator;
+
+$root = dirname(__DIR__);
+$composerAutoload = $root . '/vendor/autoload.php';
+require is_file($composerAutoload) ? $composerAutoload : $root . '/src/autoload.php';
+
+/** @return never */
+function usage(int $exitCode = 0): void
+{
+    $text = <<<'TXT'
+LandingOps Phase 1B offline tools
+
+Usage:
+  php bin/landingops validate <template.zip>
+  php bin/landingops package-sample [output.zip]
+  php bin/landingops build <template.zip> <config.json> <instance-dir>
+
+No command connects to Baota, Cloudflare, DNS, SSL, or any production service.
+TXT;
+    fwrite($exitCode === 0 ? STDOUT : STDERR, $text . PHP_EOL);
+    exit($exitCode);
+}
+
+$command = $argv[1] ?? null;
+try {
+    if ($command === 'validate') {
+        if (count($argv) !== 3) {
+            usage(2);
+        }
+        $validation = (new TemplateValidator())->validate($argv[2]);
+        $output = $validation->result->toArray();
+        if ($validation->template !== null) {
+            $output['template'] = [
+                'slug' => $validation->template->manifest->template->slug,
+                'version' => $validation->template->manifest->template->version,
+                'zip_sha256' => 'sha256:' . $validation->template->archive->sha256,
+            ];
+        }
+        fwrite(STDOUT, Json::encode((object) $output, true));
+        exit($validation->result->isValid() ? 0 : 1);
+    }
+
+    if ($command === 'package-sample') {
+        if (count($argv) > 3) {
+            usage(2);
+        }
+        $output = $argv[2] ?? ($root . '/build/minimal-lts-v1.zip');
+        (new TemplatePackager())->package($root . '/examples/templates/minimal-lts-v1', $output);
+        fwrite(STDOUT, Json::encode((object) [
+            'created' => $output,
+            'sha256' => 'sha256:' . hash_file('sha256', $output),
+        ], true));
+        exit(0);
+    }
+
+    if ($command === 'build') {
+        if (count($argv) !== 5) {
+            usage(2);
+        }
+        $configJson = @file_get_contents($argv[3]);
+        if (!is_string($configJson)) {
+            throw new RuntimeException('配置文件不可读。');
+        }
+        $config = Json::decode($configJson, $argv[3]);
+        if (!$config instanceof stdClass) {
+            throw new RuntimeException('实例配置根必须是 object。');
+        }
+        $build = (new OfflineInstanceBuilder())->build($argv[2], $config, $argv[4]);
+        fwrite(STDOUT, Json::encode((object) $build->toArray(), true));
+        exit(0);
+    }
+
+    usage($command === null ? 0 : 2);
+} catch (ValidationException $exception) {
+    fwrite(STDERR, Json::encode((object) [
+        'error' => $exception->getMessage(),
+        'validation' => $exception->result->toArray(),
+    ], true));
+    exit(1);
+} catch (Throwable $exception) {
+    fwrite(STDERR, Json::encode((object) [
+        'error' => $exception->getMessage(),
+        'type' => $exception::class,
+    ], true));
+    exit(1);
+}

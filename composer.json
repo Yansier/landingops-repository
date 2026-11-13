@@ -1,0 +1,22 @@
+{
+  "name": "yansier/landingops",
+  "description": "LandingOps Template Standard v1.0 offline validator and instance builder",
+  "type": "project",
+  "license": "proprietary",
+  "require": {
+    "php": ">=8.1 <9.0",
+    "ext-json": "*",
+    "ext-zip": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "LandingOps\\": "src/"
+    }
+  },
+  "scripts": {
+    "test": "@php tests/run.php"
+  },
+  "config": {
+    "sort-packages": true
+  }
+}

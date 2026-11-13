@@ -1,0 +1,38 @@
+:root {
+  color: #172033;
+  background: #f4f7fb;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+}
+
+main {
+  width: min(36rem, calc(100% - 3rem));
+  padding: 2.5rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 1rem;
+  background: white;
+  box-shadow: 0 1rem 3rem rgb(23 32 51 / 10%);
+}
+
+.eyebrow {
+  color: #56708f;
+  font-size: .8rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+a {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: .8rem 1.2rem;
+  border-radius: .5rem;
+  color: white;
+  background: #2558d9;
+  text-decoration: none;
+}

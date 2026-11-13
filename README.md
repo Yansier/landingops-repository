@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1A.1（文档与契约修订）已完成，尚无可运行的业务系统。** 本仓库目前只包含需求、架构、数据、模板契约、部署流程、验收规范和纯示例；不包含 Vue/PHP 业务代码、数据库迁移或真实第三方 API 调用。
+> 当前状态：**Phase 1B（模板验证与离线实例化）**。仓库已包含可运行的 PHP 离线验证器、配置投影、release 构建演示和自动化测试；仍不包含 Vue/PHP 业务 API、数据库迁移、生产发布或真实第三方 API 调用。
 
 ## 最重要的边界
 
@@ -25,6 +25,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [验收标准](docs/ACCEPTANCE.md) | 可复现的功能、异常与独立性验收用例 |
 | [架构决策](docs/DECISIONS.md) | 已定 ADR、待联调项和非阻塞待确认问题 |
 | [API 契约](docs/API_CONTRACT.md) | 控制面接口、幂等、并发与错误语义 |
+| [Phase 1B 本地运行](docs/PHASE_1B.md) | 离线验证、示例打包、实例构建与测试命令 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -38,17 +39,16 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 
 Phase 1B 实现时应将“备用页面版本”作为受审计的管理员资产管理；替换后创建新版本，不能静默改写历史部署所引用的版本。本仓库不把该参考文件复制成模板或站点运行文件。
 
-## 建议的后续代码结构（Phase 1B 才创建）
+## 当前代码结构
 
 ```text
-frontend/              # Vue 3 + Vite 管理界面
-backend/               # PHP 控制面 API、任务执行器、CLI
-database/migrations/   # MySQL 迁移
-storage/               # 运行时私有存储；不得提交凭据和上传物
-tests/                 # 契约、权限、任务与适配器测试
+src/                   # 无第三方依赖的 PHP 离线核心
+bin/landingops         # validate / package-sample / build CLI
+examples/              # 最小 LTS v1.0 模板和实例配置
+tests/                 # ZIP、契约、投影和 release 自动化测试
 ```
 
-Phase 1A 不预建空业务目录，避免把规划误认为已实现能力。
+运行方式和输出结构见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)。
 
 ## 安全提示
 

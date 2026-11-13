@@ -1,0 +1,67 @@
+{
+  "standard": "landingops-template",
+  "standard_version": "1.0",
+  "template": {
+    "slug": "minimal-static-download",
+    "name": "最小静态下载模板",
+    "version": "1.0.0",
+    "description": "用于验证 LTS v1.0 离线实例化与公开配置投影。"
+  },
+  "entry": {
+    "source": "index.html",
+    "asset_base": "./"
+  },
+  "runtime": {
+    "php": {
+      "required": false,
+      "constraint": null
+    },
+    "vendor_component": {
+      "required": false,
+      "compatibility": null
+    }
+  },
+  "capabilities": {
+    "configurable": true,
+    "pixel_ids": {
+      "multiple": true,
+      "max_items": 10
+    },
+    "events": [
+      "Download",
+      "AddToCart",
+      "Purchase"
+    ],
+    "links": {
+      "download": true,
+      "redirect": true
+    },
+    "custom_config": true
+  },
+  "native_admin": {
+    "supported": false,
+    "entry": null,
+    "auth": null,
+    "default_enabled": false,
+    "config_contract": "lts-local-config/1.0"
+  },
+  "config": {
+    "schema": "config.schema.json",
+    "local_path": ".landingops/config.json",
+    "schema_version": "1.0.0",
+    "delivery": {
+      "mode": "generated_js",
+      "script_placeholder": "__LANDINGOPS_PUBLIC_CONFIG_ASSET__",
+      "global_name": "__LANDINGOPS_CONFIG__",
+      "public_paths": [
+        "pixel_ids",
+        "events",
+        "links",
+        "custom.headline"
+      ]
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256"
+  }
+}

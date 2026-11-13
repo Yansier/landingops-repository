@@ -1,0 +1,19 @@
+{
+  "pixel_ids": [
+    "demo-pixel-001",
+    "demo-pixel-002"
+  ],
+  "events": {
+    "download": {"enabled": true},
+    "add_to_cart": {"enabled": false, "value": 1, "currency": "USD"},
+    "purchase": {"enabled": false, "value": 1, "currency": "USD"}
+  },
+  "links": {
+    "download_url": "https://downloads.example.test/app",
+    "redirect_url": null
+  },
+  "custom": {
+    "headline": "完全离线的 LandingOps 示例"
+  },
+  "private_note": "INTERNAL-ONLY-DEMO-MARKER"
+}
