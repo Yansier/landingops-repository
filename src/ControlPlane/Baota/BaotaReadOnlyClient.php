@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace LandingOps\ControlPlane\Baota;
 
 use Closure;
+use JsonException;
 use LandingOps\ControlPlane\Exception\ApiException;
 
 final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
@@ -23,7 +24,9 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
         ?Closure $sleeper = null,
     ) {
         $this->time = $time ?? static fn (): int => time();
-        $this->sleeper = $sleeper ?? static fn (int $microseconds): int => usleep($microseconds);
+        $this->sleeper = $sleeper ?? static function (int $microseconds): void {
+            usleep($microseconds);
+        };
     }
 
     public function systemSummary(string $baseUrl, string $apiKey): array
@@ -49,7 +52,7 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
             try {
                 $payload = $this->request($baseUrl, $apiKey, '/data', [
                     'action' => 'getData', 'table' => 'sites', 'type' => '-1', 'p' => $page,
-                    'limit' => self::PAGE_SIZE, 'list' => 'true',
+                    'limit' => self::PAGE_SIZE, 'search' => '',
                 ]);
             } catch (ApiException $exception) {
                 if ($page === 1) {
@@ -178,6 +181,18 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
             if (in_array($response->status, [401, 403], true)) {
                 throw new ApiException(422, 'baota_auth_failed', '宝塔 API 鉴权失败或来源 IP 未获授权。');
             }
+            $isHtml = str_contains(strtolower((string) $response->contentType), 'text/html')
+                || str_starts_with(ltrim($response->body), '<');
+            if ($response->status === 404 && $isHtml) {
+                throw new ApiException(409, 'baota_route_or_security_entry_not_found', '宝塔返回 HTML 404；官方 API 路由被安全入口或面板访问策略拦截。', [
+                    'status' => 404, 'content_type' => $response->contentType,
+                ]);
+            }
+            if ($response->status >= 300 && $response->status < 400) {
+                throw new ApiException(409, 'baota_redirect_rejected', '宝塔 API 返回重定向；LandingOps 未跟随该响应。', [
+                    'status' => $response->status,
+                ]);
+            }
             if ($response->status === 429) {
                 if ($attempt === 1) {
                     ($this->sleeper)(200000);
@@ -195,16 +210,106 @@ final class BaotaReadOnlyClient implements BaotaReadOnlyGateway
             if ($response->status !== 200 || str_starts_with((string) $response->status, '3')) {
                 throw new ApiException(502, 'baota_http_error', '宝塔只读请求失败。', ['status' => $response->status]);
             }
-            $payload = json_decode($response->body, true, 32);
+            if ($isHtml) {
+                throw new ApiException(409, 'baota_security_page_returned', '宝塔 API 返回 HTML 页面而非 JSON；请检查安全入口、白名单或面板防护。', [
+                    'status' => $response->status, 'content_type' => $response->contentType,
+                ]);
+            }
+            try {
+                $payload = json_decode($response->body, true, 32, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                throw new ApiException(502, 'baota_response_invalid', '宝塔响应不是有效 JSON 对象或数组。', [
+                    'status' => $response->status, 'content_type' => $response->contentType,
+                ]);
+            }
+            if (is_string($payload)) {
+                $trimmedPayload = trim($payload);
+                if (str_starts_with($trimmedPayload, '{') || str_starts_with($trimmedPayload, '[')) {
+                    try {
+                        $nestedPayload = json_decode($trimmedPayload, true, 32, JSON_THROW_ON_ERROR);
+                        if (is_array($nestedPayload)) {
+                            $payload = $nestedPayload;
+                        }
+                    } catch (JsonException) {
+                        // Keep the outer scalar for sanitized rejection classification.
+                    }
+                }
+            }
             if (!is_array($payload)) {
-                throw new ApiException(502, 'baota_response_invalid', '宝塔响应不是有效 JSON 对象或数组。');
+                if ($attempt === 1 && (!is_string($payload) || self::scalarShape($payload) !== 'html_or_script')) {
+                    ($this->sleeper)(200000);
+                    continue;
+                }
+                throw self::rejection($payload, $response);
             }
             if (($payload['status'] ?? null) === false) {
-                throw new ApiException(422, 'baota_auth_or_capability_failed', '宝塔拒绝了只读请求；请检查 API Key、IP 白名单和面板版本。');
+                throw self::rejection($payload['msg'] ?? null, $response);
             }
             return $payload;
         }
         throw new ApiException(502, 'baota_unavailable', '宝塔 API 暂时不可用。', [], true);
+    }
+
+    private static function rejection(mixed $payload, BaotaHttpResponse $response): ApiException
+    {
+        $message = is_string($payload) ? $payload : '';
+        $normalizedMessage = strtolower(trim($message));
+        $shape = self::scalarShape($message);
+        $details = [
+            'status' => $response->status,
+            'content_type' => $response->contentType,
+            'payload_type' => get_debug_type($payload),
+            'message_length' => strlen($message),
+            'message_fingerprint' => $message === '' ? null : substr(hash('sha256', $message), 0, 16),
+            'payload_shape' => $shape,
+        ];
+        if ($shape === 'html_or_script') {
+            return new ApiException(409, 'baota_security_page_returned', '宝塔以 JSON 字符串包装了 HTML 或脚本页面；请检查面板访问策略。', $details);
+        }
+        if ($message !== '' && preg_match('/(?:\bip\b|(?:\d{1,3}\.){3}\d{1,3}|白名单|授权地址|访问地址|来源地址)/iu', $message) === 1) {
+            return new ApiException(422, 'baota_source_ip_not_allowed', '宝塔拒绝当前请求来源；请核对 API IP 白名单与实际公网出口。', $details);
+        }
+        if ($message !== '' && preg_match('/(?:api.?key|密钥|签名|token|request_token|校验失败|验证失败|时间戳|请求时间)/iu', $message) === 1) {
+            return new ApiException(422, 'baota_auth_failed', '宝塔拒绝 API 签名或密钥；请核对当前有效 Key 与服务器时间。', $details);
+        }
+        if ($normalizedMessage !== '' && preg_match('/(?:api.{0,8}(?:关闭|未开启|未启用|disabled)|接口.{0,8}(?:关闭|未开启|未启用))/iu', $message) === 1) {
+            return new ApiException(422, 'baota_api_disabled', '宝塔面板拒绝 API 请求；请确认面板 API 接口已显式启用。', $details);
+        }
+        $exceptionType = self::pythonExceptionType($message);
+        if ($exceptionType !== null) {
+            $details['exception_type'] = $exceptionType;
+            return new ApiException(502, 'baota_panel_internal_error', '宝塔只读接口返回面板内部 Python 异常；响应正文已脱敏。', $details);
+        }
+        return new ApiException(422, 'baota_api_policy_rejected', '宝塔以标量响应拒绝了只读 API 请求；响应原文已脱敏。', $details);
+    }
+
+    private static function scalarShape(string $message): string
+    {
+        $trimmed = ltrim($message);
+        if ($trimmed === '') {
+            return 'empty';
+        }
+        if (preg_match('/^(?:<!doctype\s+html|<html\b|<script\b|<\?xml\b)/iu', $trimmed) === 1
+            || preg_match('/(?:<body\b|window\.location|document\.location)/iu', $trimmed) === 1) {
+            return 'html_or_script';
+        }
+        if (str_starts_with($trimmed, '{') || str_starts_with($trimmed, '[')) {
+            return 'structured_text_invalid';
+        }
+        if (preg_match('~^https?://~iu', $trimmed) === 1) {
+            return 'url';
+        }
+        return 'text';
+    }
+
+    private static function pythonExceptionType(string $message): ?string
+    {
+        foreach (['AttributeError', 'TypeError', 'ValueError', 'KeyError', 'IndexError', 'NameError', 'RuntimeError', 'ImportError', 'ModuleNotFoundError', 'SyntaxError', 'JSONDecodeError', 'UnicodeDecodeError', 'UnicodeEncodeError', 'OSError', 'IOError'] as $exceptionClass) {
+            if (preg_match('/(?:^|\R)' . preg_quote($exceptionClass, '/') . ':/', $message) === 1) {
+                return $exceptionClass;
+            }
+        }
+        return null;
     }
 
     /** @param list<array<string,mixed>> $sites @return array{sites:list<array<string,mixed>>,complete:bool,pages:int,reason:?string,site_limit:int} */

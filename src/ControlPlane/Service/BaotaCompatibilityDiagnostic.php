@@ -76,10 +76,17 @@ final class BaotaCompatibilityDiagnostic
                 ],
             ];
         } catch (ApiException $exception) {
+            $safeDetails = [];
+            foreach (['status', 'content_type', 'payload_type', 'message_length', 'message_fingerprint', 'payload_shape', 'exception_type'] as $key) {
+                if (array_key_exists($key, $exception->details)) {
+                    $safeDetails[$key] = $exception->details[$key];
+                }
+            }
             return [
                 'classification' => 'failed',
                 'error_code' => $exception->errorCode,
                 'message' => $exception->getMessage(),
+                'diagnostic' => $safeDetails,
                 'write_operations_performed' => false,
             ];
         }

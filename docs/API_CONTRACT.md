@@ -263,3 +263,5 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 # Phase 1J 真实只读诊断边界
 
 `bin/landingops-readonly-diagnostic` 是运维侧 CLI，不是浏览器 API。宝塔目标必须同时出现在 `LANDINGOPS_BAOTA_ALLOWED_BASE_URLS`，只允许现有 `/system`、`/data`、`/site` 固定动作；Cloudflare origin 固定为官方 API。密钥只通过私有环境变量提供，报告只返回状态、计数、类型和错误码，不返回密钥、签名、密文、DNS content 或原始响应。该入口没有写操作，也不能接受任意 URL/路径。
+
+宝塔固定只读目标采用 `/<module>?action=<allowlisted-action>`，并在表单中保留相同 action；只允许 `GetSystemTotal`、`getData(table=sites)`、`GetSiteDomains`、`GetPHPVersion`、`GetSitePHPVersion`。`table=sites` 禁止发送与该查询不兼容的 `list=true`。同一精确 origin 的响应 Cookie 只在适配器内存中复用，不能持久化或跨 origin。HTML/重定向、标量策略拒绝和面板内部异常均返回失败，不得把原始页面、Python 堆栈或响应正文放入 API/诊断报告。

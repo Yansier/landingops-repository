@@ -20,6 +20,14 @@
 
 宝塔诊断使用现有固定只读动作白名单，读取系统摘要、最多 3 页/200 个站点、最多 20 次绑定域名详情及 PHP 版本摘要。它不读取网站文件；根目录仅检查列表响应是否提供字段。分页、详情、根目录字段或能力不完整时返回 `needs_attention`。
 
+Phase 1J.1 真实兼容性修复固定以下行为：
+
+- API 使用同源根路由 `/system`、`/data`、`/site`；安全入口仅保护网页登录，不拼接到 API 路由，也不作为 API Cookie 前置步骤。
+- `action` 同时固定在经过白名单校验的查询路由和 POST 表单中，兼容目标面板及当前官方文档；请求仍使用 `application/x-www-form-urlencoded`。
+- 同一个适配器实例仅在同一精确 HTTPS origin 内存复用响应 Cookie，不落盘、不跨 origin，也不返回前端。
+- `table=sites` 不发送 `list=true`。目标宝塔 8.0.7 会因此参数返回脱敏前为 Python `TypeError`；该参数只在文档的特定列表场景中使用，不属于网站分页必要参数。
+- HTML 404、重定向、JSON 包装的 HTML、标量策略拒绝和面板 Python 异常分别分类；正文、堆栈、Cookie、签名和密钥均不进入报告。
+
 ```powershell
 $env:LANDINGOPS_BAOTA_ALLOWED_BASE_URLS='https://panel.example.test:8888'
 $env:LANDINGOPS_DIAGNOSTIC_BAOTA_BASE_URL='https://panel.example.test:8888'
@@ -66,7 +74,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\.tools\ssh\Run-MySqlIntegr
 
 ## 真实联调状态与剩余风险
 
-- 宝塔真实只读联调：**SKIP**，本轮没有获得面板 origin/API Key 的明确授权输入；模拟测试覆盖预算、不完整数据和脱敏。目标面板版本及响应字段仍待确认。
+- 宝塔真实只读联调：**PASS / needs_attention（预算导致）**。已在操作者明确授权的固定 HTTPS origin 上验证宝塔 `8.0.7`、`Ubuntu 24.04.3 LTS x86_64 (Py3.12.3)`。`GetSystemTotal`、`getData(table=sites)`、`GetSiteDomains`、`GetPHPVersion` 均可用；站点清单 26 条、1 页、根目录字段完整，前 20 次域名详情查询全部成功。因固定详情预算为 20、站点数为 26，最终报告按设计返回 `needs_attention`，不能声称所有站点绑定详情完整。
+- 宝塔安全入口：网页登录入口已确认有效，但官方 API 使用根路由；安全入口前缀和入口 Cookie 均不用于 API。TLS 校验通过、未跟随重定向；本机与面板 HTTP 时间差约 1 秒。
+- 宝塔未验证能力：没有读取生产目录，因此目录是否存在、符号链接、未知文件、同文件系统原子切换、独立 Unix 用户/FPM pool、Nginx/private 隔离仍为 `unsupported`，也不构成未来建站许可。
 - Cloudflare 真实只读联调：**SKIP**，本轮没有获得受限测试 Token、Zone 与 Account 的明确授权输入；模拟测试覆盖正常、401、403、429、超时、Zone 身份及 DNS 查询路径。
 - MariaDB：**PASS**。通过 SSH 隧道 `127.0.0.1:13306` 验证 MariaDB `10.11.10-MariaDB-log`；`DATABASE()` 为 `landingops_test`，账号为 `landingops_test@localhost` 且权限范围检查通过。001–005、重复/失败迁移恢复、FK/CHECK/UNIQUE、凭据上下文与多 Zone 失效、Cookie Session/CSRF、负责人转交、模板与域名授权、宝塔密文及单例约束均通过。
 - 新增真实 PDO API 往返：配置表单 GET 与 Dry Run POST 返回成功，配置通过 Schema 校验，执行前后 `instances`、`domain_reservations`、`deployment_jobs`、`job_steps` 数量一致；事务回滚后 22 张业务表无测试数据，正式 schema 与迁移账本保留。
@@ -74,9 +84,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\.tools\ssh\Run-MySqlIntegr
 
 ## 最终测试结果
 
-- PHP 自动化：`90 passed, 0 failed`；
+- PHP 自动化：`97 passed, 0 failed`；
 - Vue/Vitest：`7 files / 30 tests passed`；
 - PHP 语法：100 个文件通过；Composer `validate --strict` 通过；
 - Vue TypeScript 与 Vite 生产构建通过；
 - 只读诊断 CLI 无参数冒烟测试按契约返回 usage/exit 2；模拟适配器报告不含测试 Token/API Key；
 - 真实 MariaDB 集成：PASS，且只操作 `landingops_test`。
+- 真实宝塔只读诊断：系统摘要、26 条站点清单、20 次绑定详情和 2 个 PHP 版本读取成功；`write_operations_performed=false`。

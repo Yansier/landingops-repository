@@ -8,6 +8,7 @@ use LandingOps\ControlPlane\Auth\AuthorizationService;
 use LandingOps\ControlPlane\Auth\SessionService;
 use LandingOps\ControlPlane\Baota\BaotaHttpResponse;
 use LandingOps\ControlPlane\Baota\BaotaHttpTransport;
+use LandingOps\ControlPlane\Baota\BaotaEndpointPolicy;
 use LandingOps\ControlPlane\Baota\BaotaReadOnlyClient;
 use LandingOps\ControlPlane\Baota\BaotaReadOnlyGateway;
 use LandingOps\ControlPlane\Baota\BaotaSiteOwnershipEvaluator;
@@ -161,9 +162,36 @@ return [
         TestHarness::assertSame(['/data', '/data', '/site', '/site', '/site'], array_column($transport->requests, 'path'));
         TestHarness::assertSame('getData', $transport->requests[0]['fields']['action']);
         TestHarness::assertSame('sites', $transport->requests[0]['fields']['table']);
+        TestHarness::assertFalse(array_key_exists('list', $transport->requests[0]['fields']));
         TestHarness::assertSame(md5('1700000000' . md5('synthetic-secret')), $transport->requests[0]['fields']['request_token']);
         TestHarness::assertFalse(in_array('synthetic-secret', $transport->requests[0]['fields'], true));
         putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota endpoint policy pins legacy compatible action query routes' => static function (): void {
+        TestHarness::assertSame(
+            '/system?action=GetSystemTotal',
+            BaotaEndpointPolicy::readOnlyTarget('/system', ['action' => 'GetSystemTotal']),
+        );
+        TestHarness::assertSame(
+            '/data?action=getData',
+            BaotaEndpointPolicy::readOnlyTarget('/data', ['action' => 'getData', 'table' => 'sites']),
+        );
+        TestHarness::assertSame(
+            '/site?action=GetPHPVersion',
+            BaotaEndpointPolicy::readOnlyTarget('/site', ['action' => 'GetPHPVersion']),
+        );
+        foreach ([
+            ['/site', ['action' => 'AddSite']],
+            ['/data', ['action' => 'getData', 'table' => 'users']],
+            ['/system?action=RestartServer', ['action' => 'RestartServer']],
+        ] as [$path, $fields]) {
+            $error = TestHarness::assertThrows(
+                static fn () => BaotaEndpointPolicy::readOnlyTarget($path, $fields),
+                ApiException::class,
+            );
+            TestHarness::assertSame('baota_action_rejected', $error->errorCode);
+        }
     },
 
     'baota client maps auth rate limit timeout invalid response and blocks untrusted origin' => static function (): void {
@@ -185,6 +213,122 @@ return [
         TestHarness::assertSame('baota_target_not_allowed', $error->errorCode);
         TestHarness::assertSame([], $transport->requests);
         putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota client classifies html 404 security pages and redirects without leaking bodies' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $cases = [
+            'baota_route_or_security_entry_not_found' => new BaotaHttpResponse(404, '<html>sensitive panel page</html>', 'text/html'),
+            'baota_security_page_returned' => new BaotaHttpResponse(200, '<html>sensitive login page</html>', 'text/html; charset=utf-8'),
+            'baota_redirect_rejected' => new BaotaHttpResponse(302, '', 'text/html'),
+        ];
+        foreach ($cases as $code => $response) {
+            $client = new BaotaReadOnlyClient(new FakeBaotaTransport($response), static fn (): int => 1700000000, static function (int $microseconds): void {});
+            $error = TestHarness::assertThrows(static fn () => $client->systemSummary('https://panel.example.test:8888', 'synthetic-secret'), ApiException::class);
+            TestHarness::assertSame($code, $error->errorCode);
+            TestHarness::assertNotContains('sensitive', json_encode($error->details, JSON_THROW_ON_ERROR));
+        }
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota client classifies scalar json policy failures without returning raw messages' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $cases = [
+            'baota_source_ip_not_allowed' => 'IP地址不在白名单中 synthetic-sensitive',
+            'baota_auth_failed' => 'API密钥校验失败 synthetic-sensitive',
+            'baota_api_disabled' => 'API接口未开启 synthetic-sensitive',
+            'baota_api_policy_rejected' => '请求被拒绝 synthetic-sensitive',
+        ];
+        foreach ($cases as $code => $message) {
+            $response = new BaotaHttpResponse(200, json_encode($message, JSON_THROW_ON_ERROR), 'application/json');
+            $client = new BaotaReadOnlyClient(new FakeBaotaTransport($response, $response), static fn (): int => 1700000000, static function (int $microseconds): void {});
+            $error = TestHarness::assertThrows(static fn () => $client->systemSummary('https://panel.example.test:8888', 'synthetic-secret'), ApiException::class);
+            TestHarness::assertSame($code, $error->errorCode);
+            TestHarness::assertNotContains('synthetic-sensitive', json_encode($error->details, JSON_THROW_ON_ERROR));
+            TestHarness::assertNotContains('synthetic-sensitive', $error->getMessage());
+            TestHarness::assertSame(16, strlen((string) ($error->details['message_fingerprint'] ?? '')));
+        }
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota client safely unwraps one nested json response level' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $nested = json_encode(json_encode([
+            'version' => '11.7.0', 'system' => 'Linux',
+        ], JSON_THROW_ON_ERROR), JSON_THROW_ON_ERROR);
+        $client = new BaotaReadOnlyClient(
+            new FakeBaotaTransport(new BaotaHttpResponse(200, $nested, 'application/json')),
+            static fn (): int => 1700000000,
+            static function (int $microseconds): void {},
+        );
+        $summary = $client->systemSummary('https://panel.example.test:8888', 'synthetic-secret');
+        TestHarness::assertSame('11.7.0', $summary['panel_version']);
+        TestHarness::assertSame('Linux', $summary['system']);
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota client recognizes html wrapped in a json string' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $body = json_encode('<script>window.location="/login?sensitive"</script>', JSON_THROW_ON_ERROR);
+        $client = new BaotaReadOnlyClient(
+            new FakeBaotaTransport(new BaotaHttpResponse(200, $body, 'application/json')),
+            static fn (): int => 1700000000,
+            static function (int $microseconds): void {},
+        );
+        $error = TestHarness::assertThrows(
+            static fn () => $client->systemSummary('https://panel.example.test:8888', 'synthetic-secret'),
+            ApiException::class,
+        );
+        TestHarness::assertSame('baota_security_page_returned', $error->errorCode);
+        TestHarness::assertSame('html_or_script', $error->details['payload_shape']);
+        TestHarness::assertNotContains('sensitive', json_encode($error->details, JSON_THROW_ON_ERROR));
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota client classifies wrapped python exceptions without leaking traceback' => static function (): void {
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS=https://panel.example.test:8888');
+        $traceback = "Traceback (most recent call last):\n  File \"/sensitive/panel.py\", line 1\nTypeError: synthetic-sensitive";
+        $response = new BaotaHttpResponse(200, json_encode($traceback, JSON_THROW_ON_ERROR), 'application/json');
+        $client = new BaotaReadOnlyClient(
+            new FakeBaotaTransport($response, $response),
+            static fn (): int => 1700000000,
+            static function (int $microseconds): void {},
+        );
+        $error = TestHarness::assertThrows(
+            static fn () => $client->systemSummary('https://panel.example.test:8888', 'synthetic-secret'),
+            ApiException::class,
+        );
+        TestHarness::assertSame('baota_panel_internal_error', $error->errorCode);
+        TestHarness::assertSame('TypeError', $error->details['exception_type']);
+        TestHarness::assertNotContains('sensitive', json_encode($error->details, JSON_THROW_ON_ERROR));
+        putenv('LANDINGOPS_BAOTA_ALLOWED_BASE_URLS');
+    },
+
+    'baota compatibility diagnostic exposes only allowlisted rejection metadata' => static function (): void {
+        $gateway = new class implements BaotaReadOnlyGateway {
+            public function systemSummary(string $baseUrl, string $apiKey): array
+            {
+                throw new ApiException(422, 'baota_api_policy_rejected', 'sanitized', [
+                    'status' => 200,
+                    'content_type' => 'application/json',
+                    'payload_type' => 'string',
+                    'message_length' => 23,
+                    'message_fingerprint' => '0123456789abcdef',
+                    'payload_shape' => 'text',
+                    'raw_message' => 'must-not-leak',
+                ]);
+            }
+            public function sites(string $baseUrl, string $apiKey): array { return []; }
+            public function siteInventory(string $baseUrl, string $apiKey): array { return []; }
+            public function siteDomains(string $baseUrl, string $apiKey, int $siteId): array { return []; }
+            public function phpVersions(string $baseUrl, string $apiKey): array { return []; }
+            public function sitePhpVersion(string $baseUrl, string $apiKey, string $siteName): array { return []; }
+            public function directoryObservation(string $normalizedPath): array { return []; }
+        };
+        $report = (new BaotaCompatibilityDiagnostic($gateway))->run('https://panel.example.test:8888', 'synthetic-secret');
+        TestHarness::assertSame('0123456789abcdef', $report['diagnostic']['message_fingerprint']);
+        TestHarness::assertFalse(array_key_exists('raw_message', $report['diagnostic']));
+        TestHarness::assertNotContains('must-not-leak', json_encode($report, JSON_THROW_ON_ERROR));
     },
 
     'baota pagination failure returns an explicitly incomplete inventory' => static function (): void {

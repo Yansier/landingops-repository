@@ -6,7 +6,7 @@ namespace LandingOps\ControlPlane\Baota;
 
 final readonly class BaotaHttpResponse
 {
-    public function __construct(public int $status, public string $body)
+    public function __construct(public int $status, public string $body, public ?string $contentType = null)
     {
     }
 }

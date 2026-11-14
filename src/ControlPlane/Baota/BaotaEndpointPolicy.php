@@ -8,6 +8,22 @@ use LandingOps\ControlPlane\Exception\ApiException;
 
 final class BaotaEndpointPolicy
 {
+    /** @param array<string,string|int> $fields */
+    public static function readOnlyTarget(string $path, array $fields): string
+    {
+        $allowed = [
+            '/system' => ['GetSystemTotal'],
+            '/data' => ['getData'],
+            '/site' => ['GetSiteDomains', 'GetPHPVersion', 'GetSitePHPVersion'],
+        ];
+        $action = $fields['action'] ?? null;
+        if (!isset($allowed[$path]) || !is_string($action) || !in_array($action, $allowed[$path], true)
+            || ($path === '/data' && ($fields['table'] ?? null) !== 'sites')) {
+            throw new ApiException(422, 'baota_action_rejected', '宝塔请求目标不在只读白名单中。');
+        }
+        return $path . '?action=' . rawurlencode($action);
+    }
+
     public static function normalize(string $value): string
     {
         $value = trim($value);
