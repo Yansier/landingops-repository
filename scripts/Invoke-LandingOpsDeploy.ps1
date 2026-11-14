@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('doctor', 'plan', 'build', 'init', 'update', 'rollback')]
+    [ValidateSet('authorize-sandbox', 'doctor', 'plan', 'build', 'init', 'update', 'rollback')]
     [string]$Command,
 
     [Parameter(Mandatory = $true)]

@@ -261,11 +261,28 @@ final class DeploymentConfig
     private static function httpsOrigin(array $object, string $key, string $path): void
     {
         $value = self::string($object, $key, $path);
+        if (preg_match('/[\x00-\x20\x7f\\\\]/', $value) === 1 || filter_var($value, FILTER_VALIDATE_URL) === false) {
+            throw new DeploymentException('baota_origin_invalid', '宝塔地址必须是规范化的固定 HTTPS origin。');
+        }
         $parts = parse_url($value);
         if (!is_array($parts) || ($parts['scheme'] ?? null) !== 'https' || !is_string($parts['host'] ?? null)
-            || isset($parts['user'], $parts['pass'], $parts['query'], $parts['fragment'])
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])
             || (($parts['path'] ?? '') !== '' && ($parts['path'] ?? '') !== '/')) {
             throw new DeploymentException('baota_origin_invalid', '宝塔地址必须是固定 HTTPS origin。');
+        }
+        $host = $parts['host'];
+        $isIpv6 = str_starts_with($host, '[') && str_ends_with($host, ']');
+        $hostValue = $isIpv6 ? substr($host, 1, -1) : $host;
+        $validHost = filter_var($hostValue, FILTER_VALIDATE_IP) !== false
+            || preg_match('/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $hostValue) === 1;
+        $port = $parts['port'] ?? null;
+        if (!$validHost || $hostValue !== strtolower($hostValue) || ($port !== null && ($port < 1 || $port > 65535))) {
+            throw new DeploymentException('baota_origin_invalid', '宝塔地址主机或端口不是规范化值。');
+        }
+        $serializedHost = str_contains($hostValue, ':') ? '[' . $hostValue . ']' : $hostValue;
+        $normalized = 'https://' . $serializedHost . ($port === null ? '' : ':' . $port);
+        if ($value !== $normalized && $value !== $normalized . '/') {
+            throw new DeploymentException('baota_origin_invalid', '宝塔地址必须是规范化的固定 HTTPS origin。');
         }
     }
 

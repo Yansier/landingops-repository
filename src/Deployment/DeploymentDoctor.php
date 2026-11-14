@@ -25,6 +25,11 @@ final class DeploymentDoctor
         $checks = [];
         $data = $config->all();
         $secretPresence ??= $this->environmentPresence($config);
+        $evidence = $this->object($facts, 'evidence');
+        $manualEvidence = in_array($evidence['source'] ?? null, ['manual_json', 'test_fixture'], true)
+            && ($evidence['trust_level'] ?? null) === 'simulation_only';
+        $this->check($checks, 'facts_trust_contract', $manualEvidence,
+            'Phase 1L 仅接受明确标记为 simulation_only 的手工或测试事实。');
         $identity = $this->object($facts, 'identity');
         $this->check($checks, 'ssh_target_identity',
             ($identity['host'] ?? null) === $data['target']['ssh_host']
@@ -126,6 +131,9 @@ final class DeploymentDoctor
             'deployment_scope' => 'landingops_platform',
             'checks' => $checks,
             'blocker_count' => count($blocked),
+            'facts_trust_level' => 'simulation_only',
+            'real_execution_eligible' => false,
+            'phase_1m_reverification_required' => true,
             'real_execution_enabled' => false,
             'write_operations_performed' => false,
         ];

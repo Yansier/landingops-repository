@@ -4,8 +4,8 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| PHP 自动化 | 125 passed, 0 failed（含 13 项部署工具测试） |
-| PHP 语法检查 | 通过 |
+| PHP 自动化 | 130 passed, 0 failed（含 Phase 1L.1 安全回归） |
+| PHP 语法检查 | 114 个文件通过 |
 | Composer `validate --strict` | 通过 |
 | Composer production install | 通过 |
 | Vue/Vitest | 30 passed |
@@ -26,6 +26,10 @@
 - 初始化、更新与回滚保留 shared 持久化数据。
 - 数据库迁移失败、指针切换失败、健康检查失败均恢复或保持上一代码版本；不自动回滚数据库。
 - 未指定本地模拟根时禁止执行。
+- Origin userinfo/query/fragment/非根路径/异常主机与端口全部拒绝。
+- 未授权、复制标记、源码重叠、文件系统根、路径别名和符号链接模拟目录全部拒绝。
+- Source Map、`.env`、私钥、备份、源码和私有配置不能进入公开 release。
+- 手工事实固定为 `simulation_only`，不能产生真实执行资格。
 
 ## 尚未执行
 

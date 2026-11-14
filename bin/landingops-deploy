@@ -19,6 +19,7 @@ function deploymentUsage(int $code): never
 LandingOps portable deployment foundation (Phase 1L)
 
 Usage:
+  php bin/landingops-deploy authorize-sandbox --config <file> --simulate-root <empty-directory>
   php bin/landingops-deploy doctor --config <file> --facts <file>
   php bin/landingops-deploy plan --config <file> --facts <file> --operation <init|update|rollback> --version <version>
   php bin/landingops-deploy build --config <file> --version <version> --source-commit <sha> --output <directory>
@@ -99,6 +100,22 @@ try {
             $root, $options['output'], $options['version'], strtolower($options['source-commit']), $builtAt,
         ));
     }
+    if ($command === 'authorize-sandbox') {
+        $simulateRoot = $options['simulate-root'] ?? null;
+        if (!is_string($simulateRoot)) {
+            throw new DeploymentException('simulation_root_invalid', '--simulate-root 必填。');
+        }
+        $authorized = (new DeploymentExecutionPolicy())->authorizeSimulationRoot($simulateRoot, $config, $root);
+        deploymentOutput([
+            'status' => 'simulation_sandbox_authorized',
+            'sandbox_path_sha256' => hash('sha256', str_replace('\\', '/', strtolower($authorized))),
+            'deployment_scope' => 'landingops_platform_simulation',
+            'real_execution_enabled' => false,
+            'write_operations_performed' => true,
+            'write_scope' => 'simulation_marker_only',
+            'real_server_writes' => false,
+        ]);
+    }
     $factsPath = $options['facts'] ?? null;
     if (!is_string($factsPath)) {
         throw new DeploymentException('diagnostic_facts_missing', '--facts 必填。');
@@ -117,13 +134,17 @@ try {
     if (!in_array($command, ['init', 'update', 'rollback'], true)) {
         deploymentUsage(1);
     }
-    $simulateRoot = (new DeploymentExecutionPolicy())->requireSimulationRoot($options['simulate-root'] ?? null);
+    $simulateRoot = (new DeploymentExecutionPolicy())->requireSimulationRoot(
+        $options['simulate-root'] ?? null,
+        $config,
+        $root,
+    );
     if (($doctor['classification'] ?? null) !== 'ready_for_simulation') {
         throw new DeploymentException('doctor_blocked', '环境检查未通过，拒绝模拟执行。');
     }
     $releaseDirectory = $command === 'rollback' ? null : ($options['release-dir'] ?? null);
     deploymentOutput((new SimulatedDeploymentExecutor())->execute(
-        $config, $command, $version, $releaseDirectory, $simulateRoot,
+        $config, $command, $version, $releaseDirectory, $simulateRoot, [], $root,
     ));
 } catch (DeploymentException $exception) {
     fwrite(STDERR, json_encode([

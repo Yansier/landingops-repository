@@ -68,12 +68,26 @@ final class ReleaseManifest
             if (!str_starts_with($relative, 'public/')) {
                 continue;
             }
-            if (str_ends_with(strtolower($relative), '.php')
-                && !in_array($relative, ['public/index.php', 'public/health.php'], true)) {
-                throw new DeploymentException('public_root_executable_forbidden', 'public Web Root 包含未授权 PHP 文件。');
+            if (preg_match('#(?:^|/)(?:\.[^/]*|composer\.(?:json|lock)|database|src|vendor|config\.(?:json|php|ya?ml)|private(?:[-_.][^/]*)?|backup(?:[-_.][^/]*)?)(?:/|$)#i', $relative) === 1
+                || preg_match('/(?:\.map|\.env|\.pem|\.key|\.p12|\.pfx|\.sql|\.bak|\.backup|\.old|\.orig|\.swp|\.tmp|\.zip|\.tar|\.gz|\.vue|\.tsx?|\.scss|\.sass|\.less)$/i', $relative) === 1
+                || str_ends_with($relative, '~')) {
+                throw new DeploymentException('public_root_private_file', '敏感、备份、源码或私有配置文件进入了 public Web Root。', ['path' => $relative]);
             }
-            if (preg_match('#(?:^|/)(?:\.env|composer\.(?:json|lock)|database|src|vendor)(?:/|$)#i', $relative) === 1) {
-                throw new DeploymentException('public_root_private_file', '私有应用文件进入了 public Web Root。');
+            if (in_array($relative, ['public/index.php', 'public/health.php', 'public/index.html'], true)) {
+                // Explicitly approved entry points.
+            } elseif (preg_match('#^public/assets/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{6,}\.(?:js|css|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|eot)$#D', $relative) !== 1) {
+                throw new DeploymentException('public_root_file_forbidden', 'public Web Root 包含非 Vue 构建白名单文件。', ['path' => $relative]);
+            }
+            $path = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
+            $handle = fopen($path, 'rb');
+            $sample = is_resource($handle) ? fread($handle, 1048576) : false;
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+            if (!is_string($sample)
+                || preg_match('/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/', $sample) === 1
+                || preg_match('/LANDINGOPS_(?:DEPLOY|APP|DATABASE)_[A-Z0-9_]*\s*=\s*[^\s"\']+/', $sample) === 1) {
+                throw new DeploymentException('public_root_sensitive_content', 'public Web Root 文件包含疑似私钥或私有配置内容。', ['path' => $relative]);
             }
         }
         foreach (['public/index.php', 'public/health.php', 'public/index.html'] as $required) {

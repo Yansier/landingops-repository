@@ -9,7 +9,10 @@ final class SimulatedDeploymentExecutor
     private const MARKER = '.landingops-installation.json';
     private const POINTER = 'current-release.json';
 
-    public function __construct(private readonly ReleaseManifest $manifest = new ReleaseManifest())
+    public function __construct(
+        private readonly ReleaseManifest $manifest = new ReleaseManifest(),
+        private readonly SimulationSandbox $sandboxGuard = new SimulationSandbox(),
+    )
     {
     }
 
@@ -24,16 +27,17 @@ final class SimulatedDeploymentExecutor
         ?string $releaseDirectory,
         string $sandboxRoot,
         array $faults = [],
+        ?string $projectRoot = null,
     ): array {
         if (!in_array($operation, ['init', 'update', 'rollback'], true)) {
             throw new DeploymentException('deployment_operation_invalid', '模拟执行器只支持 init、update、rollback。');
         }
-        $sandbox = realpath($sandboxRoot);
-        if (!is_string($sandbox) || !is_dir($sandbox)) {
-            throw new DeploymentException('simulation_root_invalid', '模拟根目录必须预先存在。');
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/D', $version) !== 1) {
+            throw new DeploymentException('release_identity_invalid', '模拟 release 版本无效。');
         }
-        $target = $this->mapPath($sandbox, $config->installRoot());
-        $this->assertNoSymlinkAncestors($sandbox, $target);
+        $projectRoot ??= dirname(__DIR__, 2);
+        $sandbox = $this->sandboxGuard->verify($sandboxRoot, $config, $projectRoot);
+        $target = $this->sandboxGuard->map($sandbox, $config->installRoot());
         $markerPath = $target . DIRECTORY_SEPARATOR . self::MARKER;
         $newInstallation = $operation === 'init';
         if ($operation === 'init') {
@@ -46,19 +50,21 @@ final class SimulatedDeploymentExecutor
                 if (!mkdir($target, 0700, true)) {
                     throw new DeploymentException('simulation_write_failed', '无法创建模拟安装目录。');
                 }
+                $this->sandboxGuard->assertManagedPath($sandbox, $target);
             }
         } else {
             $this->assertOwned($config, $markerPath);
         }
         $paths = $config->all()['paths'];
-        $releases = $this->mapPath($sandbox, (string) $paths['releases_dir']);
-        $staging = $this->mapPath($sandbox, (string) $paths['staging_dir']);
-        $shared = $this->mapPath($sandbox, (string) $paths['shared_dir']);
+        $releases = $this->sandboxGuard->map($sandbox, (string) $paths['releases_dir']);
+        $staging = $this->sandboxGuard->map($sandbox, (string) $paths['staging_dir']);
+        $shared = $this->sandboxGuard->map($sandbox, (string) $paths['shared_dir']);
         $pointer = $target . DIRECTORY_SEPARATOR . self::POINTER;
         foreach ([$releases, $staging, $shared] as $directory) {
             if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
                 throw new DeploymentException('simulation_write_failed', '无法创建模拟部署目录。');
             }
+            $this->sandboxGuard->assertManagedPath($sandbox, $directory);
         }
         if ($operation === 'init') {
             file_put_contents($markerPath, json_encode([
@@ -124,10 +130,10 @@ final class SimulatedDeploymentExecutor
             ];
         } catch (\Throwable $exception) {
             if (is_string($stage) && file_exists($stage)) {
-                $this->removeTree($stage);
+                $this->removeTree($stage, $sandbox, $config, $target, $projectRoot);
             }
             if ($newInstallation && $this->currentVersion($pointer) === null) {
-                $this->removeOwnedEmptyInstall($target, $config->installationId());
+                $this->removeOwnedEmptyInstall($target, $sandbox, $config, $projectRoot);
             }
             throw $exception;
         }
@@ -143,28 +149,6 @@ final class SimulatedDeploymentExecutor
         if (!is_array($marker) || ($marker['installation_id'] ?? null) !== $config->installationId()
             || ($marker['deployment_scope'] ?? null) !== 'landingops_platform') {
             throw new DeploymentException('installation_marker_mismatch', '安装所有权标记不匹配。');
-        }
-    }
-
-    private function mapPath(string $sandbox, string $logicalPath): string
-    {
-        $relative = str_replace('/', DIRECTORY_SEPARATOR, ltrim($logicalPath, '/'));
-        $mapped = $sandbox . DIRECTORY_SEPARATOR . $relative;
-        if (!str_starts_with(strtolower($mapped . DIRECTORY_SEPARATOR), strtolower($sandbox . DIRECTORY_SEPARATOR))) {
-            throw new DeploymentException('simulation_path_escape', '模拟路径越界。');
-        }
-        return $mapped;
-    }
-
-    private function assertNoSymlinkAncestors(string $sandbox, string $target): void
-    {
-        $relative = substr($target, strlen($sandbox) + 1);
-        $current = $sandbox;
-        foreach (explode(DIRECTORY_SEPARATOR, $relative) as $part) {
-            $current .= DIRECTORY_SEPARATOR . $part;
-            if (is_link($current)) {
-                throw new DeploymentException('deployment_path_symlink', '目标路径祖先包含符号链接。');
-            }
         }
     }
 
@@ -216,27 +200,52 @@ final class SimulatedDeploymentExecutor
         }
     }
 
-    private function removeOwnedEmptyInstall(string $target, string $installationId): void
+    private function removeOwnedEmptyInstall(
+        string $target,
+        string $sandbox,
+        DeploymentConfig $config,
+        string $projectRoot,
+    ): void
     {
         $marker = $target . DIRECTORY_SEPARATOR . self::MARKER;
-        if (!is_file($marker) || !str_contains((string) file_get_contents($marker), $installationId)) {
+        try {
+            $this->assertOwned($config, $marker);
+        } catch (DeploymentException) {
             return;
         }
-        $this->removeTree($target);
+        $this->removeTree($target, $sandbox, $config, $target, $projectRoot);
     }
 
-    private function removeTree(string $path): void
+    private function removeTree(
+        string $path,
+        string $sandbox,
+        DeploymentConfig $config,
+        string $installationRoot,
+        string $projectRoot,
+    ): void
+    {
+        $this->sandboxGuard->verify($sandbox, $config, $projectRoot);
+        $this->assertOwned($config, $installationRoot . DIRECTORY_SEPARATOR . self::MARKER);
+        $this->sandboxGuard->assertManagedPath($sandbox, $path);
+        $this->sandboxGuard->assertTreeHasNoLinks($path);
+        $this->removeTreeInternal($path);
+    }
+
+    private function removeTreeInternal(string $path): void
     {
         if (!file_exists($path)) {
             return;
         }
-        if (is_file($path) || is_link($path)) {
+        if (is_link($path)) {
+            throw new DeploymentException('simulation_cleanup_refused', '清理目标包含符号链接，已停止递归清理。');
+        }
+        if (is_file($path)) {
             @unlink($path);
             return;
         }
         foreach (scandir($path) ?: [] as $entry) {
             if ($entry !== '.' && $entry !== '..') {
-                $this->removeTree($path . DIRECTORY_SEPARATOR . $entry);
+                $this->removeTreeInternal($path . DIRECTORY_SEPARATOR . $entry);
             }
         }
         @rmdir($path);

@@ -11,6 +11,7 @@ use LandingOps\Deployment\DeploymentExecutionPolicy;
 use LandingOps\Deployment\DeploymentPlanner;
 use LandingOps\Deployment\ReleaseBuilder;
 use LandingOps\Deployment\ReleaseManifest;
+use LandingOps\Deployment\SimulationSandbox;
 use LandingOps\Deployment\SimulatedDeploymentExecutor;
 
 /** @return array<string,mixed> */
@@ -73,6 +74,13 @@ function phase1lCurrent(string $sandbox): ?string
     return json_decode((string) file_get_contents($path), true, 8, JSON_THROW_ON_ERROR)['version'] ?? null;
 }
 
+function phase1lAuthorizedSandbox(string $name, DeploymentConfig $config): string
+{
+    $sandbox = TestHarness::tempDirectory($name);
+    (new DeploymentExecutionPolicy())->authorizeSimulationRoot($sandbox, $config, dirname(__DIR__));
+    return $sandbox;
+}
+
 /** @return array<string,\Closure> */
 return [
     'deployment config is portable strict and contains only environment credential references' => static function (): void {
@@ -102,13 +110,47 @@ return [
         }
     },
 
+    'deployment config rejects malformed and credential bearing baota origins' => static function (): void {
+        foreach ([
+            'http://panel.example.invalid:8888',
+            'https://user@panel.example.invalid:8888',
+            'https://:pass@panel.example.invalid:8888',
+            'https://panel.example.invalid:8888?next=/system',
+            'https://panel.example.invalid:8888#fragment',
+            'https://panel.example.invalid:8888/system',
+            'https://PANEL.example.invalid:8888',
+            'https://panel.example.invalid:70000',
+            'https://panel.example.invalid:8888\\@attacker.invalid',
+            'https://panel..example.invalid:8888',
+        ] as $origin) {
+            $data = phase1lConfigData();
+            $data['target']['baota_https_origin'] = $origin;
+            TestHarness::assertThrows(static fn () => DeploymentConfig::fromArray($data), DeploymentException::class);
+        }
+        $data = phase1lConfigData();
+        $data['target']['baota_https_origin'] = 'https://127.0.0.1:8888/';
+        TestHarness::assertSame('https://127.0.0.1:8888/', DeploymentConfig::fromArray($data)->all()['target']['baota_https_origin']);
+    },
+
     'deployment doctor passes only complete matching non root isolated evidence' => static function (): void {
         $config = DeploymentConfig::fromArray(phase1lConfigData());
         $report = (new DeploymentDoctor())->inspect($config, phase1lFacts(), phase1lSecrets($config));
         TestHarness::assertSame('ready_for_simulation', $report['classification']);
         TestHarness::assertSame(0, $report['blocker_count']);
         TestHarness::assertFalse($report['real_execution_enabled']);
+        TestHarness::assertFalse($report['real_execution_eligible']);
+        TestHarness::assertSame('simulation_only', $report['facts_trust_level']);
         TestHarness::assertFalse($report['write_operations_performed']);
+    },
+
+    'manual facts can never grant real execution and unknown trust metadata is blocked' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $facts = phase1lFacts();
+        $facts['evidence'] = ['source' => 'trusted_remote_collector', 'trust_level' => 'production'];
+        $report = (new DeploymentDoctor())->inspect($config, $facts, phase1lSecrets($config));
+        TestHarness::assertSame('blocked', $report['classification']);
+        TestHarness::assertFalse($report['real_execution_eligible']);
+        TestHarness::assertTrue($report['phase_1m_reverification_required']);
     },
 
     'deployment doctor blocks missing extensions build failures symlinks and credentials' => static function (): void {
@@ -134,6 +176,8 @@ return [
             TestHarness::assertSame('landingops_platform', $plan['deployment_scope']);
             TestHarness::assertSame(0, $plan['customer_site_operations']);
             TestHarness::assertFalse($plan['database']['automatic_rollback']);
+            TestHarness::assertFalse($plan['real_execution_eligible']);
+            TestHarness::assertTrue($plan['phase_1m_reverification_required']);
             TestHarness::assertFalse($plan['real_execution_enabled']);
             TestHarness::assertFalse($plan['write_operations_performed']);
         }
@@ -141,10 +185,76 @@ return [
 
     'real deployment execution is disabled unless an explicit simulation root is supplied' => static function (): void {
         $error = TestHarness::assertThrows(
-            static fn () => (new DeploymentExecutionPolicy())->requireSimulationRoot(null),
+            static fn () => (new DeploymentExecutionPolicy())->requireSimulationRoot(
+                null,
+                DeploymentConfig::fromArray(phase1lConfigData()),
+                dirname(__DIR__),
+            ),
             DeploymentException::class,
         );
         TestHarness::assertSame('real_execution_disabled', $error->errorCode);
+    },
+
+    'simulation root requires an explicit marker identity and cannot overlap source or filesystem root' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $policy = new DeploymentExecutionPolicy();
+        $unmarked = TestHarness::tempDirectory('phase1l-unmarked');
+        TestHarness::assertSame('simulation_marker_missing', TestHarness::assertThrows(
+            static fn () => $policy->requireSimulationRoot($unmarked, $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+        TestHarness::assertSame('simulation_root_forbidden', TestHarness::assertThrows(
+            static fn () => $policy->authorizeSimulationRoot(dirname(__DIR__), $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+        $filesystemRoot = dirname((string) realpath($unmarked));
+        while (dirname($filesystemRoot) !== $filesystemRoot) {
+            $filesystemRoot = dirname($filesystemRoot);
+        }
+        TestHarness::assertSame('simulation_root_forbidden', TestHarness::assertThrows(
+            static fn () => $policy->authorizeSimulationRoot($filesystemRoot, $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+        $authorized = phase1lAuthorizedSandbox('phase1l-authorized', $config);
+        TestHarness::assertSame((string) realpath($authorized), $policy->requireSimulationRoot($authorized, $config, dirname(__DIR__)));
+        $aliased = $authorized . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . basename($authorized);
+        TestHarness::assertSame('simulation_root_forbidden', TestHarness::assertThrows(
+            static fn () => $policy->requireSimulationRoot($aliased, $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+        $marker = $authorized . '/' . SimulationSandbox::MARKER;
+        $copied = TestHarness::tempDirectory('phase1l-copied-marker');
+        copy($marker, $copied . '/' . SimulationSandbox::MARKER);
+        TestHarness::assertSame('simulation_marker_mismatch', TestHarness::assertThrows(
+            static fn () => $policy->requireSimulationRoot($copied, $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+        $payload = json_decode((string) file_get_contents($marker), true, 16, JSON_THROW_ON_ERROR);
+        $payload['installation_id'] = 'different-installation';
+        file_put_contents($marker, json_encode($payload, JSON_THROW_ON_ERROR));
+        TestHarness::assertSame('simulation_marker_mismatch', TestHarness::assertThrows(
+            static fn () => $policy->requireSimulationRoot($authorized, $config, dirname(__DIR__)),
+            DeploymentException::class,
+        )->errorCode);
+    },
+
+    'simulation rejects symlinked managed directories without cleaning external data' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-symlink-root', $config);
+        $outside = TestHarness::tempDirectory('phase1l-symlink-outside');
+        phase1lWrite($outside . '/must-stay.txt', 'external');
+        $install = $sandbox . '/srv/landingops';
+        mkdir($install, 0700, true);
+        $linked = @symlink($outside, $install . '/staging');
+        if ($linked) {
+            $release = phase1lRelease($sandbox, 'v1');
+            $error = TestHarness::assertThrows(
+                static fn () => (new SimulatedDeploymentExecutor())->execute($config, 'init', 'v1', $release, $sandbox),
+                DeploymentException::class,
+            );
+            TestHarness::assertSame('simulation_symlink_forbidden', $error->errorCode);
+        }
+        TestHarness::assertSame('external', file_get_contents($outside . '/must-stay.txt'));
     },
 
     'release builder creates a private application package and minimal public web root' => static function (): void {
@@ -152,7 +262,7 @@ return [
         $output = TestHarness::tempDirectory('phase1l-builder-output');
         foreach ([
             'composer.json' => '{}', 'composer.lock' => '{}', 'vendor/autoload.php' => '<?php',
-            'frontend/dist/index.html' => '<!doctype html>', 'frontend/dist/assets/app.js' => 'console.log(1)',
+            'frontend/dist/index.html' => '<!doctype html>', 'frontend/dist/assets/app-abc12345.js' => 'console.log(1)',
             'public/index.php' => '<?php', 'public/health.php' => '<?php', 'src/App.php' => '<?php',
             'bin/landingops-control' => '<?php', 'tests/secret-test.php' => '<?php', 'deploy/tool.php' => '<?php',
         ] as $path => $content) {
@@ -172,6 +282,35 @@ return [
         TestHarness::assertSame('landingops_platform', (new ReleaseManifest())->verify($result['release_directory'])['deployment_scope']);
     },
 
+    'release builder rejects source maps private configuration backups and embedded private keys' => static function (): void {
+        foreach ([
+            'frontend/dist/assets/app-abc12345.js.map' => '{}',
+            'frontend/dist/.env.production' => 'DATABASE_PASSWORD=secret',
+            'frontend/dist/assets/app-abc12345.js' => '-----BEGIN PRIVATE KEY----- secret',
+            'frontend/dist/assets/config-abc12345.json' => '{"private":true}',
+            'frontend/dist/assets/app-abc12345.js.bak' => 'backup',
+        ] as $publicPath => $content) {
+            $project = TestHarness::tempDirectory('phase1l-sensitive-public');
+            $output = TestHarness::tempDirectory('phase1l-sensitive-output');
+            foreach ([
+                'composer.json' => '{}', 'composer.lock' => '{}', 'vendor/autoload.php' => '<?php',
+                'frontend/dist/index.html' => '<!doctype html>', 'frontend/dist/assets/base-abc12345.js' => 'console.log(1)',
+                'public/index.php' => '<?php', 'public/health.php' => '<?php', 'src/App.php' => '<?php',
+                'bin/landingops-control' => '<?php',
+            ] as $path => $fixture) {
+                phase1lWrite($project . '/' . $path, $fixture);
+            }
+            for ($i = 1; $i <= 6; $i++) {
+                phase1lWrite($project . '/database/migrations/00' . $i . '_test.sql', 'SELECT ' . $i . ';');
+            }
+            phase1lWrite($project . '/' . $publicPath, $content);
+            TestHarness::assertThrows(
+                static fn () => (new ReleaseBuilder())->build($project, $output, 'v1', str_repeat('a', 40), '2026-01-01T00:00:00Z'),
+                DeploymentException::class,
+            );
+        }
+    },
+
     'release builder fails closed when composer or vue production artifacts are missing' => static function (): void {
         $project = TestHarness::tempDirectory('phase1l-missing-build');
         $output = TestHarness::tempDirectory('phase1l-missing-output');
@@ -184,10 +323,10 @@ return [
     },
 
     'simulated init rejects unknown target content and never touches sibling sites' => static function (): void {
-        $sandbox = TestHarness::tempDirectory('phase1l-unknown-target');
+        $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-unknown-target', $config);
         phase1lWrite($sandbox . '/srv/landingops/foreign.txt', 'unknown');
         phase1lWrite($sandbox . '/srv/existing-site/index.html', 'must-stay');
-        $config = DeploymentConfig::fromArray(phase1lConfigData());
         $release = phase1lRelease($sandbox, 'v1');
         $error = TestHarness::assertThrows(
             static fn () => (new SimulatedDeploymentExecutor())->execute($config, 'init', 'v1', $release, $sandbox),
@@ -198,9 +337,9 @@ return [
     },
 
     'simulated install update and rollback preserve persistent data and foreign sites' => static function (): void {
-        $sandbox = TestHarness::tempDirectory('phase1l-lifecycle');
-        phase1lWrite($sandbox . '/srv/existing-site/index.html', 'external');
         $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-lifecycle', $config);
+        phase1lWrite($sandbox . '/srv/existing-site/index.html', 'external');
         $executor = new SimulatedDeploymentExecutor();
         $v1 = phase1lRelease($sandbox, 'v1');
         TestHarness::assertSame('simulated_success', $executor->execute($config, 'init', 'v1', $v1, $sandbox)['status']);
@@ -215,8 +354,8 @@ return [
     },
 
     'manifest mismatch blocks install before release switch' => static function (): void {
-        $sandbox = TestHarness::tempDirectory('phase1l-manifest-fail');
         $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-manifest-fail', $config);
         $release = phase1lRelease($sandbox, 'v1');
         file_put_contents($release . '/src/App.php', 'tampered');
         $error = TestHarness::assertThrows(
@@ -228,8 +367,8 @@ return [
     },
 
     'migration and switch failures keep the prior active release' => static function (): void {
-        $sandbox = TestHarness::tempDirectory('phase1l-faults');
         $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-faults', $config);
         $executor = new SimulatedDeploymentExecutor();
         $executor->execute($config, 'init', 'v1', phase1lRelease($sandbox, 'v1'), $sandbox);
         $v2 = phase1lRelease($sandbox, 'v2');
@@ -246,8 +385,8 @@ return [
     },
 
     'failed health check restores old code pointer without database rollback' => static function (): void {
-        $sandbox = TestHarness::tempDirectory('phase1l-health-fail');
         $config = DeploymentConfig::fromArray(phase1lConfigData());
+        $sandbox = phase1lAuthorizedSandbox('phase1l-health-fail', $config);
         $executor = new SimulatedDeploymentExecutor();
         $executor->execute($config, 'init', 'v1', phase1lRelease($sandbox, 'v1'), $sandbox);
         $result = $executor->execute($config, 'update', 'v2', phase1lRelease($sandbox, 'v2'), $sandbox, ['health_fail' => true]);
