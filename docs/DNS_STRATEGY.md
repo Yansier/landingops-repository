@@ -4,9 +4,11 @@
 
 V1 把一个已验证 Cloudflare Zone 主要关联到唯一宝塔网站服务器。服务器地址只读取管理员明确配置的 `LANDINGOPS_CONFIRMED_PUBLIC_IPV4`，不得用面板地址或公网递归解析结果猜测。LandingOps 默认复用已经存在、内容匹配的 Cloudflare 通配符 A 记录，不为每个实例创建精确 A 记录，也不修改、删除或替换通配符。
 
-`reuse_existing_wildcard` 仅在下列证据同时成立时出现：连接和 Zone 已启用；Zone 验证绑定当前凭据上下文；候选 FQDN 在 Zone 内；精确名称没有记录；实际适用的通配符名称存在且只有一个 A 记录；记录 content 等于管理员确认 IPv4、`proxied=false`、`ttl=1`；候选路径没有 NS 委派；查询完整且观察时间不超过五分钟。
+`reuse_existing_wildcard` 仅在下列证据同时成立时出现：连接和 Zone 已启用；Zone 验证绑定当前凭据上下文；候选 FQDN 在 Zone 内；精确名称没有记录；从最具体父级到 Zone 根逐级检查后得到的实际适用通配符存在且只有一个 A 记录；记录 content 等于管理员确认 IPv4、`proxied=false`、`ttl=1`；路径不存在具体 DNS 节点或 NS 委派造成的遮蔽；查询完整且观察时间不超过五分钟。
 
-DNS 通配符只替换一个标签。因此 `offer.pages.example.com` 的直接适用名称是 `*.pages.example.com`，不能仅凭 `*.example.com` 存在就判断覆盖。精确 A/AAAA/CNAME/NS 或其他类型会影响通配符，相关委派、代理状态缺失、复杂 CNAME、证据过期和查询不完整均采用 fail-closed 结果。
+Cloudflare 的通配符记录语法只允许最左侧标签为 `*`，但标准名称服务器默认支持多层匹配：没有更具体节点遮蔽时，`*.example.com` 可覆盖 `a.example.com` 和 `b.a.example.com`。因此检查 `offer.pages.example.com` 时必须依次考虑 `*.pages.example.com`、`*.example.com`，不能因前者不存在就忽略后者；一旦发现更具体通配符，就不得因其目标不兼容而退回较宽通配符。
+
+候选名称到通配符基点之间的任一具体节点记录（包括 TXT、A、AAAA、CNAME 等）会遮蔽较宽通配符；NS 表示委派并直接阻断。对没有自身记录但存在后代记录的 empty non-terminal，标准名称服务器仍可应用较宽通配符，Advanced Nameservers 按 RFC 4592 行为阻断；无法从 Zone 元数据确认模式时返回 `unsupported`。所有祖先精确查询及后缀查询必须完整，超页、权限不足、模式未知、证据过期或字段缺失均 fail closed。
 
 ## 分类
 
@@ -19,7 +21,7 @@ DNS 通配符只替换一个标签。因此 `offer.pages.example.com` 的直接�
 
 DNS 匹配从不证明 LandingOps 拥有宝塔网站。正式执行前必须重新读取 Cloudflare 和完整宝塔站点绑定；本阶段没有 DNS 写接口。
 
-实现依据：Cloudflare 官方 [List Zones](https://developers.cloudflare.com/api/resources/zones/methods/list/)（`Zone Read`、单页最多 50）与 [List DNS Records](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/)（`DNS Read`、`name.exact`）契约。
+实现依据：Cloudflare 官方 [Wildcard DNS records](https://developers.cloudflare.com/dns/manage-dns-records/reference/wildcard-dns-records/)（多层匹配、具体记录优先、empty non-terminal 与 Advanced Nameservers 差异）、[List Zones](https://developers.cloudflare.com/api/resources/zones/methods/list/)（Zone 元数据）与 [List DNS Records](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/list/)（`DNS Read`、`name.exact`/`name.endswith`）契约。
 
 ## Zone 自动发现
 

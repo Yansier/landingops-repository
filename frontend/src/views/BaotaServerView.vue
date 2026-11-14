@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ApiError } from '@/services/api'
-import { getBaotaConfig, getBaotaIsolation, listBaotaSites, loadBaotaSiteDetailBatch, precheckBaota, saveBaotaConfig, verifyBaota } from '@/services/resources'
+import { getBaotaConfig, getBaotaIsolation, loadBaotaSiteDetailBatch, precheckBaota, saveBaotaConfig, verifyBaota } from '@/services/resources'
 import type { BaotaConfig, BaotaInventory, BaotaIsolationResult, BaotaPrecheck, BaotaSite } from '@/types/api'
 import IconBase from '@/components/IconBase.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
@@ -11,13 +11,14 @@ import StatusBadge from '@/components/StatusBadge.vue'
 const config=ref<BaotaConfig|null>(null),sites=ref<BaotaSite[]>([]),isolation=ref<BaotaIsolationResult|null>(null)
 const inventory=ref<BaotaInventory|null>(null)
 const nextDetailOffset=ref<number|null>(null)
+const snapshotId=ref<string|null>(null),snapshotVersion=ref<number|null>(null)
 const loading=ref(true),error=ref(''),notice=ref(''),open=ref(false),busy=ref(false),formError=ref('')
 const hostname=ref(''),precheck=ref<BaotaPrecheck|null>(null),precheckBusy=ref(false)
 const form=reactive({base_url:'',api_key:''})
 const message=(e:unknown)=>e instanceof ApiError?e.message:'操作失败，请稍后重试。'
 
-async function load(){loading.value=true;error.value='';try{config.value=await getBaotaConfig();sites.value=[];inventory.value=null;nextDetailOffset.value=null;isolation.value=null;if(config.value?.verification_status==='valid'&&config.value.admin_state==='enabled'){const results=await Promise.allSettled([listBaotaSites(),getBaotaIsolation()]);if(results[0].status==='fulfilled'){sites.value=results[0].value.sites;inventory.value=results[0].value.inventory;nextDetailOffset.value=results[0].value.batch?.next_offset??null}if(results[1].status==='fulfilled')isolation.value=results[1].value}}catch(e){error.value=message(e)}finally{loading.value=false}}
-async function loadNextDetails(){if(nextDetailOffset.value===null)return;busy.value=true;error.value='';try{const result=await loadBaotaSiteDetailBatch(nextDetailOffset.value,20);const byId=new Map(result.sites.map(site=>[site.external_id,site]));sites.value=sites.value.map(site=>{const update=byId.get(site.external_id);return update&&update.domain_capability!=='not_in_batch'?update:site});nextDetailOffset.value=result.batch.next_offset;if(nextDetailOffset.value===null&&inventory.value)inventory.value={...inventory.value,complete:result.batch.complete&&inventory.value.listing_complete,details_complete:result.batch.complete,reason:result.batch.complete?null:inventory.value.reason};notice.value=result.batch.complete?'本批详情读取完成。':'本批存在失败，仍不能宣称无冲突。'}catch(e){error.value=message(e)}finally{busy.value=false}}
+async function load(){loading.value=true;error.value='';try{config.value=await getBaotaConfig();sites.value=[];inventory.value=null;nextDetailOffset.value=null;snapshotId.value=null;snapshotVersion.value=null;isolation.value=null;if(config.value?.verification_status==='valid'&&config.value.admin_state==='enabled'){const results=await Promise.allSettled([loadBaotaSiteDetailBatch(0,20),getBaotaIsolation()]);if(results[0].status==='fulfilled'){sites.value=results[0].value.sites;inventory.value=results[0].value.inventory;nextDetailOffset.value=results[0].value.batch.next_offset;snapshotId.value=results[0].value.batch.snapshot_id;snapshotVersion.value=results[0].value.batch.snapshot_version}if(results[1].status==='fulfilled')isolation.value=results[1].value}}catch(e){error.value=message(e)}finally{loading.value=false}}
+async function loadNextDetails(){if(nextDetailOffset.value===null||!snapshotId.value||snapshotVersion.value===null)return;busy.value=true;error.value='';try{const result=await loadBaotaSiteDetailBatch(nextDetailOffset.value,20,snapshotId.value,snapshotVersion.value);sites.value=result.sites;inventory.value=result.inventory;nextDetailOffset.value=result.batch.next_offset;snapshotVersion.value=result.batch.snapshot_version;notice.value=result.batch.complete?'服务端完整站点证据已形成。':'本批尚未完成，不能宣称无冲突。'}catch(e){error.value=message(e)}finally{busy.value=false}}
 function edit(){Object.assign(form,{base_url:'',api_key:''});formError.value='';open.value=true}
 async function save(){busy.value=true;formError.value='';try{const payload:{base_url?:string;api_key?:string;expected_version?:number}={};if(form.base_url)payload.base_url=form.base_url;if(form.api_key)payload.api_key=form.api_key;if(config.value)payload.expected_version=config.value.version;config.value=await saveBaotaConfig(payload);notice.value=config.value.version===1?'已登记唯一宝塔连接，尚未验证。':'连接已更新；地址或 API Key 变化会重置验证状态。';open.value=false;await load()}catch(e){formError.value=message(e)}finally{busy.value=false}}
 async function setState(state:'enabled'|'disabled'){if(!config.value||!confirm(`${state==='disabled'?'停用':'重新启用'}宝塔只读连接？`))return;try{config.value=await saveBaotaConfig({admin_state:state,expected_version:config.value.version});notice.value=state==='disabled'?'连接已停用；未修改任何站点。':'连接已重新启用，必要时请重新验证。';await load()}catch(e){error.value=message(e)}}

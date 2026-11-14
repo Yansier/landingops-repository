@@ -18,6 +18,7 @@ use LandingOps\ControlPlane\Support\UtcClock;
 final class BaotaReadOnlyService
 {
     private const DETAIL_QUERY_BUDGET = 20;
+    private const SNAPSHOT_TTL_SECONDS = 300;
     private readonly AuditLogger $audit;
 
     public function __construct(
@@ -109,13 +110,19 @@ final class BaotaReadOnlyService
     }
 
     /** @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>,batch:array<string,mixed>} */
-    public function siteDetailBatch(Principal $actor, int $offset, int $limit): array
+    public function siteDetailBatch(
+        Principal $actor,
+        int $offset,
+        int $limit,
+        ?string $snapshotId = null,
+        ?int $expectedSnapshotVersion = null,
+    ): array
     {
         if ($offset < 0 || $limit < 1 || $limit > self::DETAIL_QUERY_BUDGET) {
             throw new ApiException(422, 'baota_detail_batch_invalid', '站点详情批次 offset 或 limit 无效。');
         }
         [$config, $key] = $this->credentials($actor);
-        return $this->discoverSites($config, $key, $offset, $limit);
+        return $this->collectSnapshotBatch($config, $key, $offset, $limit, $snapshotId, $expectedSnapshotVersion);
     }
 
     /** @return array<string,mixed> */
@@ -160,7 +167,7 @@ final class BaotaReadOnlyService
     /** @param array<string,mixed> $config @return array<string,mixed> */
     private function precheckWithCredentials(string $hostname, array $config, string $key): array
     {
-        $discovery = $this->discoverSites($config, $key);
+        $discovery = $this->snapshotDiscovery($config, $key);
         $sites = $discovery['sites'];
         $candidatePath = BaotaPath::candidateRoot($hostname);
         $issues = [];
@@ -206,6 +213,13 @@ final class BaotaReadOnlyService
         $observation = $candidatePath === null
             ? ['status' => 'unsupported', 'path' => null, 'entry_count' => null, 'has_unknown_entries' => null, 'is_symlink' => null]
             : $this->gateway->directoryObservation($candidatePath);
+        $staticCapabilities = [
+            'target_parent_authorized' => ($observation['parent_authorized'] ?? null) === true,
+            'nginx_vhost_isolation' => ($observation['nginx_vhost_isolation'] ?? null) === true,
+            'atomic_release_supported' => ($observation['atomic_release_supported'] ?? null) === true,
+            'static_release_supported' => ($observation['static_release_supported'] ?? null) === true,
+        ];
+        $staticDeploymentReady = !in_array(false, $staticCapabilities, true);
         if (($observation['is_symlink'] ?? null) === true) {
             $knownConflict = true;
             $issues[] = ['code' => 'candidate_path_symlink', 'message' => '候选目录是符号链接，拒绝继续。', 'site_id' => null];
@@ -227,6 +241,12 @@ final class BaotaReadOnlyService
         } elseif (!$knownConflict && ($observation['status'] ?? null) !== 'absent') {
             $issues[] = ['code' => 'filesystem_not_confirmed', 'message' => '只读面板 API 无法确认目录、符号链接和未知文件，必须人工检查。', 'site_id' => null];
         }
+        if (!$knownConflict && !$staticDeploymentReady) {
+            $issues[] = ['code' => 'static_deployment_capabilities_incomplete', 'message' => '独立父目录、Nginx 边界或原子静态 release 能力尚未全部确认。', 'site_id' => null];
+            if ($classification === 'clear') {
+                $classification = 'needs_attention';
+            }
+        }
         return [
             'hostname' => $hostname, 'candidate_path' => $candidatePath, 'classification' => $classification,
             'issues' => $issues, 'directory_observation' => $observation,
@@ -237,6 +257,8 @@ final class BaotaReadOnlyService
                 default => '现有只读证据不足，需要人工检查。',
             },
             'inventory' => $discovery['inventory'],
+            'static_deployment_capabilities' => $staticCapabilities,
+            'static_deployment_ready' => $staticDeploymentReady,
             'mutations_performed' => false,
         ];
     }
@@ -272,6 +294,260 @@ final class BaotaReadOnlyService
             ],
             'php_deployment' => ['status' => 'disabled', 'message' => 'Unix 用户、FPM pool 与 private 隔离未全部确认，未来 PHP 部署保持禁用。'],
             'mutations_performed' => false,
+        ];
+    }
+
+    /** @param array<string,mixed> $config @return array<string,mixed> */
+    private function collectSnapshotBatch(
+        array $config,
+        string $key,
+        int $offset,
+        int $limit,
+        ?string $snapshotId,
+        ?int $expectedSnapshotVersion,
+    ): array {
+        $inventory = $this->gateway->siteInventory((string) $config['base_url'], $key);
+        $rows = $this->stableInventoryRows($inventory);
+        $identity = $this->inventoryIdentity($rows);
+        $now = $this->clock->now();
+        $nowSql = $now->format('Y-m-d H:i:s.u');
+        $expiresSql = $now->modify('+' . self::SNAPSHOT_TTL_SECONDS . ' seconds')->format('Y-m-d H:i:s.u');
+
+        if ($snapshotId === null) {
+            if ($offset !== 0) {
+                throw new ApiException(422, 'baota_snapshot_required', '非首批详情查询必须提交服务端快照 ID。');
+            }
+            $snapshot = [
+                'id' => $this->ids->generate(),
+                'baota_config_id' => $config['id'],
+                'config_version' => (int) $config['version'],
+                'inventory_fingerprint' => $identity['fingerprint'],
+                'site_ids_json' => self::json($identity['site_ids']),
+                'observations_json' => self::json([]),
+                'status' => 'collecting',
+                'next_offset' => 0,
+                'failure_code' => null,
+                'observed_at' => $nowSql,
+                'expires_at' => $expiresSql,
+                'version' => 1,
+                'created_at' => $nowSql,
+                'updated_at' => $nowSql,
+            ];
+            $this->repository->insertBaotaInventorySnapshot($snapshot);
+        } else {
+            $snapshot = $this->repository->findBaotaInventorySnapshot($snapshotId);
+            if ($snapshot === null) {
+                throw new ApiException(404, 'baota_snapshot_not_found', '宝塔清单证据快照不存在。');
+            }
+            if ($expectedSnapshotVersion === null || (int) $snapshot['version'] !== $expectedSnapshotVersion) {
+                throw new ApiException(409, 'baota_snapshot_version_conflict', '宝塔清单证据快照版本已变化。');
+            }
+            if ($snapshot['status'] !== 'collecting' || (int) $snapshot['next_offset'] !== $offset) {
+                throw new ApiException(409, 'baota_snapshot_not_collecting', '该快照不能继续或批次 offset 不匹配。');
+            }
+            if ($snapshot['baota_config_id'] !== $config['id']
+                || (int) $snapshot['config_version'] !== (int) $config['version']) {
+                return $this->failSnapshot($snapshot, 'baota_config_context_changed', $rows, $inventory, $nowSql);
+            }
+            if (!hash_equals((string) $snapshot['inventory_fingerprint'], $identity['fingerprint'])
+                || self::decodeList($snapshot['site_ids_json']) !== $identity['site_ids']) {
+                return $this->failSnapshot($snapshot, 'site_set_changed', $rows, $inventory, $nowSql);
+            }
+            if ((string) $snapshot['expires_at'] <= $nowSql) {
+                return $this->failSnapshot($snapshot, 'snapshot_expired', $rows, $inventory, $nowSql);
+            }
+        }
+
+        if (($inventory['complete'] ?? false) !== true) {
+            return $this->failSnapshot($snapshot, 'site_listing_incomplete', $rows, $inventory, $nowSql);
+        }
+        if ($offset > count($rows)) {
+            throw new ApiException(422, 'baota_detail_batch_invalid', '站点详情批次 offset 超出当前清单。');
+        }
+        $observations = self::decodeObject($snapshot['observations_json']);
+        $end = min(count($rows), $offset + $limit);
+        $failureCode = null;
+        for ($index = $offset; $index < $end; $index++) {
+            $row = $rows[$index];
+            $externalId = $row['external_id'];
+            try {
+                $domainResult = $this->gateway->siteDomains((string) $config['base_url'], $key, $externalId);
+                $status = (string) ($domainResult['status'] ?? 'unsupported');
+                if ($status !== 'supported' || !is_array($domainResult['domains'] ?? null)) {
+                    $failureCode = 'site_domain_detail_incomplete';
+                    break;
+                }
+                $domains = array_values(array_unique(array_map('strval', $domainResult['domains'])));
+                if (is_string($row['name'] ?? null) && !in_array($row['name'], $domains, true)) {
+                    $domains[] = $row['name'];
+                }
+                $observations['site_' . $externalId] = [
+                    'external_id' => $externalId,
+                    'domains' => $domains,
+                    'status' => 'supported',
+                    'observed_at' => $nowSql,
+                ];
+            } catch (ApiException) {
+                $failureCode = 'site_domain_detail_failed';
+                break;
+            }
+        }
+        if ($failureCode !== null) {
+            $snapshot['observations_json'] = self::json($observations);
+            return $this->failSnapshot($snapshot, $failureCode, $rows, $inventory, $nowSql);
+        }
+
+        $nextOffset = $end < count($rows) ? $end : null;
+        $complete = $nextOffset === null && count($observations) === count($identity['site_ids']);
+        $changes = [
+            'observations_json' => self::json($observations),
+            'status' => $complete ? 'complete' : 'collecting',
+            'next_offset' => $nextOffset,
+            'failure_code' => null,
+            'updated_at' => $nowSql,
+        ];
+        if (!$this->repository->updateBaotaInventorySnapshot((string) $snapshot['id'], $changes, (int) $snapshot['version'])) {
+            throw new ApiException(409, 'baota_snapshot_version_conflict', '保存宝塔清单证据时发生并发冲突。');
+        }
+        $snapshot = array_replace($snapshot, $changes, ['version' => (int) $snapshot['version'] + 1]);
+        return $this->snapshotResponse($snapshot, $rows, $inventory, $offset, $limit, $end - $offset);
+    }
+
+    /** @param array<string,mixed> $config @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>} */
+    private function snapshotDiscovery(array $config, string $key): array
+    {
+        $now = $this->clock->sql();
+        $snapshot = $this->repository->findLatestCompleteBaotaInventorySnapshot(
+            (string) $config['id'],
+            (int) $config['version'],
+            $now,
+        );
+        if ($snapshot === null) {
+            return ['sites' => [], 'inventory' => [
+                'complete' => false, 'details_complete' => false, 'reason' => 'complete_server_snapshot_required',
+                'snapshot_id' => null, 'observed_at' => null, 'expires_at' => null,
+            ]];
+        }
+        $inventory = $this->gateway->siteInventory((string) $config['base_url'], $key);
+        $rows = $this->stableInventoryRows($inventory);
+        $identity = $this->inventoryIdentity($rows);
+        if (($inventory['complete'] ?? false) !== true
+            || !hash_equals((string) $snapshot['inventory_fingerprint'], $identity['fingerprint'])
+            || self::decodeList($snapshot['site_ids_json']) !== $identity['site_ids']) {
+            $this->repository->updateBaotaInventorySnapshot((string) $snapshot['id'], [
+                'status' => 'failed', 'next_offset' => null, 'failure_code' => 'site_set_changed', 'updated_at' => $now,
+            ], (int) $snapshot['version']);
+            return ['sites' => [], 'inventory' => [
+                'complete' => false, 'details_complete' => false, 'reason' => 'site_set_changed',
+                'snapshot_id' => $snapshot['id'], 'observed_at' => $snapshot['observed_at'], 'expires_at' => $snapshot['expires_at'],
+            ]];
+        }
+        return $this->snapshotResponse($snapshot, $rows, $inventory, 0, 0, 0);
+    }
+
+    /** @param array<string,mixed> $snapshot @param list<array<string,mixed>> $rows @param array<string,mixed> $inventory @return array<string,mixed> */
+    private function failSnapshot(array $snapshot, string $code, array $rows, array $inventory, string $now): array
+    {
+        $changes = [
+            'observations_json' => $snapshot['observations_json'],
+            'status' => 'failed', 'next_offset' => null, 'failure_code' => $code, 'updated_at' => $now,
+        ];
+        if (!$this->repository->updateBaotaInventorySnapshot((string) $snapshot['id'], $changes, (int) $snapshot['version'])) {
+            throw new ApiException(409, 'baota_snapshot_version_conflict', '保存失败证据时发生并发冲突。');
+        }
+        $snapshot = array_replace($snapshot, $changes, ['version' => (int) $snapshot['version'] + 1]);
+        return $this->snapshotResponse($snapshot, $rows, $inventory, (int) ($snapshot['next_offset'] ?? 0), 0, 0);
+    }
+
+    /** @param array<string,mixed> $snapshot @param list<array<string,mixed>> $rows @param array<string,mixed> $inventory @return array<string,mixed> */
+    private function snapshotResponse(array $snapshot, array $rows, array $inventory, int $offset, int $limit, int $processed): array
+    {
+        $observations = self::decodeObject($snapshot['observations_json']);
+        $instances = $this->repository->listInstances(null, null);
+        $sites = [];
+        foreach ($rows as $row) {
+            $observation = $observations['site_' . $row['external_id']] ?? null;
+            $domains = is_array($observation) && is_array($observation['domains'] ?? null) ? $observation['domains'] : [];
+            $normalizedPath = null;
+            if (is_string($row['path'] ?? null)) {
+                try {
+                    $normalizedPath = BaotaPath::normalize($row['path']);
+                } catch (ApiException) {
+                    $normalizedPath = null;
+                }
+            }
+            $site = array_merge($row, [
+                'domains' => $domains,
+                'domain_capability' => is_array($observation) ? ($observation['status'] ?? 'unsupported') : 'not_in_snapshot',
+                'normalized_path' => $normalizedPath,
+                'php_capability' => 'not_queried', 'php_version' => null, 'ownership_marker_hash' => null,
+            ]);
+            $site['ownership'] = $this->ownership->evaluate($site, $instances);
+            $sites[] = $site;
+        }
+        $complete = $snapshot['status'] === 'complete'
+            && count($observations) === count(self::decodeList($snapshot['site_ids_json']));
+        return [
+            'sites' => $sites,
+            'inventory' => [
+                'complete' => $complete,
+                'listing_complete' => (bool) ($inventory['complete'] ?? false),
+                'listing_reason' => $inventory['reason'] ?? null,
+                'details_complete' => $complete,
+                'reason' => $complete ? null : ($snapshot['failure_code'] ?? 'detail_batches_remaining'),
+                'pages' => (int) ($inventory['pages'] ?? 0),
+                'site_limit' => (int) ($inventory['site_limit'] ?? 200),
+                'detail_query_budget' => self::DETAIL_QUERY_BUDGET,
+                'detail_queries_used' => count($observations),
+                'detail_failures' => $snapshot['status'] === 'failed' ? 1 : 0,
+                'snapshot_id' => $snapshot['id'],
+                'snapshot_version' => (int) $snapshot['version'],
+                'snapshot_status' => $snapshot['status'],
+                'inventory_fingerprint' => $snapshot['inventory_fingerprint'],
+                'observed_at' => $snapshot['observed_at'],
+                'expires_at' => $snapshot['expires_at'],
+            ],
+            'batch' => [
+                'offset' => $offset, 'limit' => $limit, 'processed' => $processed,
+                'complete' => $complete, 'next_offset' => $snapshot['next_offset'],
+                'total_sites' => count($rows), 'observed_at' => $snapshot['observed_at'],
+                'snapshot_id' => $snapshot['id'], 'snapshot_version' => (int) $snapshot['version'],
+                'snapshot_status' => $snapshot['status'], 'failure_code' => $snapshot['failure_code'],
+                'write_operations_performed' => false,
+            ],
+        ];
+    }
+
+    /** @param array<string,mixed> $inventory @return list<array<string,mixed>> */
+    private function stableInventoryRows(array $inventory): array
+    {
+        $rows = is_array($inventory['sites'] ?? null) ? array_values($inventory['sites']) : [];
+        foreach ($rows as $row) {
+            if (!is_array($row) || !is_int($row['external_id'] ?? null)) {
+                throw new ApiException(502, 'baota_site_identity_incomplete', '站点清单缺少稳定外部 ID。');
+            }
+        }
+        usort($rows, static fn (array $a, array $b): int => $a['external_id'] <=> $b['external_id']);
+        $ids = array_column($rows, 'external_id');
+        if (count($ids) !== count(array_unique($ids))) {
+            throw new ApiException(502, 'baota_site_identity_duplicate', '站点清单包含重复外部 ID。');
+        }
+        return $rows;
+    }
+
+    /** @param list<array<string,mixed>> $rows @return array{site_ids:list<int>,fingerprint:string} */
+    private function inventoryIdentity(array $rows): array
+    {
+        $identity = array_map(static fn (array $row): array => [
+            'external_id' => $row['external_id'],
+            'name' => is_string($row['name'] ?? null) ? $row['name'] : null,
+            'path' => is_string($row['path'] ?? null) ? $row['path'] : null,
+            'status' => is_string($row['status'] ?? null) ? $row['status'] : null,
+            'metadata_complete' => ($row['metadata_complete'] ?? false) === true,
+        ], $rows);
+        return [
+            'site_ids' => array_values(array_map('intval', array_column($identity, 'external_id'))),
+            'fingerprint' => hash('sha256', self::json($identity)),
         ];
     }
 
@@ -380,5 +656,25 @@ final class BaotaReadOnlyService
     private static function json(array $value): string
     {
         return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    /** @return array<string,mixed> */
+    private static function decodeObject(mixed $json): array
+    {
+        if (!is_string($json)) {
+            return [];
+        }
+        $value = json_decode($json, true, 64);
+        return is_array($value) ? $value : [];
+    }
+
+    /** @return list<int> */
+    private static function decodeList(mixed $json): array
+    {
+        if (!is_string($json)) {
+            return [];
+        }
+        $value = json_decode($json, true, 64);
+        return is_array($value) && array_is_list($value) ? array_values(array_map('intval', $value)) : [];
     }
 }

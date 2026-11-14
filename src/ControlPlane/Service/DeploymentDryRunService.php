@@ -70,8 +70,13 @@ final class DeploymentDryRunService
             $blockers[] = self::item('config_invalid', '站点配置未通过模板 Schema 校验。');
         }
         $manifest = $this->jsonObject($version['manifest_json'] ?? null, 'template_manifest_invalid');
-        if (($manifest->runtime->php->required ?? false) === true) {
+        $staticTemplate = ($manifest->runtime->php->required ?? null) === false;
+        $nativeAdminDisabled = ($manifest->native_admin->supported ?? null) === false;
+        if (!$staticTemplate) {
             $blockers[] = self::item('php_isolation_unverified', 'PHP 模板部署保持禁用，尚无足够的运行隔离证据。');
+        }
+        if (!$nativeAdminDisabled) {
+            $blockers[] = self::item('native_admin_disabled', '本阶段只允许不含原生后台的静态模板进入测试部署准备状态。');
         }
 
         $baota = $this->baota?->precheckForDeployment($fqdn) ?? [
@@ -98,10 +103,49 @@ final class DeploymentDryRunService
         $risks[] = self::item('dry_run_not_reservation', '预演不预留域名、实例、任务或任何外部资源。');
 
         $targetPath = $baota['candidate_path'] ?? BaotaPath::candidateRoot($fqdn);
+        $dnsEvidence = is_array($dns['evidence'] ?? null) ? $dns['evidence'] : [];
+        $dnsIdentity = is_array($dns['resource_identity'] ?? null) ? $dns['resource_identity'] : [];
+        $baotaInventory = is_array($baota['inventory'] ?? null) ? $baota['inventory'] : [];
+        $directory = is_array($baota['directory_observation'] ?? null) ? $baota['directory_observation'] : [];
+        $staticCapabilities = is_array($baota['static_deployment_capabilities'] ?? null)
+            ? $baota['static_deployment_capabilities'] : [];
+        $dnsReady = ($dns['classification'] ?? null) === 'wildcard_covered'
+            && ($dnsEvidence['complete'] ?? false) === true
+            && ($dnsEvidence['fresh'] ?? false) === true
+            && is_string($dnsIdentity['connection_id'] ?? null) && $dnsIdentity['connection_id'] !== ''
+            && is_string($dnsIdentity['zone_id'] ?? null) && $dnsIdentity['zone_id'] !== ''
+            && is_string($dnsIdentity['zone_external_id'] ?? null) && $dnsIdentity['zone_external_id'] !== ''
+            && (string) ($dnsIdentity['credential_context_version'] ?? '') !== ''
+            && (string) ($dnsIdentity['credential_context_version'] ?? '')
+                === (string) ($dnsIdentity['zone_verified_credential_context_version'] ?? '');
+        $baotaReady = ($baota['classification'] ?? null) === 'clear'
+            && ($baotaInventory['complete'] ?? false) === true
+            && ($baotaInventory['listing_complete'] ?? false) === true
+            && ($baotaInventory['details_complete'] ?? false) === true
+            && is_string($baotaInventory['snapshot_id'] ?? null) && $baotaInventory['snapshot_id'] !== ''
+            && is_string($baotaInventory['inventory_fingerprint'] ?? null)
+            && strlen($baotaInventory['inventory_fingerprint']) === 64
+            && self::futureEvidenceTime($baotaInventory['expires_at'] ?? null)
+            && ($directory['status'] ?? null) === 'absent'
+            && ($directory['is_symlink'] ?? null) === false
+            && ($directory['has_unknown_entries'] ?? null) === false
+            && ($baota['static_deployment_ready'] ?? false) === true
+            && $staticCapabilities !== []
+            && !in_array(false, array_values($staticCapabilities), true);
+        $readiness = [
+            'template_and_authorization' => $staticTemplate && $nativeAdminDisabled,
+            'configuration_valid' => ($validation['valid'] ?? false) === true,
+            'dns_wildcard_evidence' => $dnsReady,
+            'baota_complete_inventory' => $baotaReady,
+            'target_directory_absent' => ($directory['status'] ?? null) === 'absent',
+            'static_release_isolation' => ($baota['static_deployment_ready'] ?? false) === true,
+            'no_external_writes_performed' => ($dns['write_operations_performed'] ?? false) === false
+                && ($baota['mutations_performed'] ?? false) === false,
+        ];
         $unsupported = ($dns['classification'] ?? null) === 'unsupported'
-            || ($baota['classification'] ?? null) === 'unsupported';
-        $ready = $blockers === [] && ($dns['classification'] ?? null) === 'wildcard_covered'
-            && ($baota['classification'] ?? null) === 'clear';
+            || ($baota['classification'] ?? null) === 'unsupported'
+            || !$dnsReady || !$baotaReady;
+        $ready = $blockers === [] && !in_array(false, array_values($readiness), true);
         $status = $blockers !== [] ? 'blocked' : ($ready ? 'ready_for_test_deployment' : ($unsupported ? 'unsupported' : 'needs_attention'));
         return [
             'status' => $status,
@@ -123,6 +167,7 @@ final class DeploymentDryRunService
                 'values_returned' => false,
             ],
             'external_checks' => ['baota' => $baota, 'dns' => $dns],
+            'readiness' => $readiness,
             'plan' => [
                 'target_path' => $targetPath,
                 'steps' => [
@@ -232,5 +277,14 @@ final class DeploymentDryRunService
             'issues' => [self::item($code, 'Cloudflare 只读证据未能完整取得；不会执行 DNS 写入。')],
             'write_operations_performed' => false,
         ];
+    }
+
+    private static function futureEvidenceTime(mixed $value): bool
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return false;
+        }
+        $timestamp = strtotime($value . (str_contains($value, 'T') || str_ends_with($value, 'Z') ? '' : ' UTC'));
+        return $timestamp !== false && $timestamp > time();
     }
 }

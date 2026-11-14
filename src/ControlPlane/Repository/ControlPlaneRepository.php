@@ -118,6 +118,14 @@ interface ControlPlaneRepository
     public function insertBaotaConfig(array $config): void;
     /** @param array<string,mixed> $changes */
     public function updateBaotaConfig(string $id, array $changes, int $expectedVersion): bool;
+    /** @param array<string,mixed> $snapshot */
+    public function insertBaotaInventorySnapshot(array $snapshot): void;
+    /** @return array<string,mixed>|null */
+    public function findBaotaInventorySnapshot(string $id): ?array;
+    /** @param array<string,mixed> $changes */
+    public function updateBaotaInventorySnapshot(string $id, array $changes, int $expectedVersion): bool;
+    /** @return array<string,mixed>|null */
+    public function findLatestCompleteBaotaInventorySnapshot(string $configId, int $configVersion, string $now): ?array;
     /** @param array<string,mixed> $audit */
     public function insertAudit(array $audit): void;
 }

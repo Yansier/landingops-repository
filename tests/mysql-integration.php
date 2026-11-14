@@ -252,6 +252,7 @@ try {
         showCreateTable($pdo, 'cloudflare_connections'),
         showCreateTable($pdo, 'cloudflare_zones'),
         showCreateTable($pdo, 'baota_config'),
+        showCreateTable($pdo, 'baota_inventory_snapshots'),
         showCreateTable($pdo, 'instances'),
     ];
     $dataBeforeRepeat = [
@@ -267,6 +268,7 @@ try {
         showCreateTable($pdo, 'cloudflare_connections'),
         showCreateTable($pdo, 'cloudflare_zones'),
         showCreateTable($pdo, 'baota_config'),
+        showCreateTable($pdo, 'baota_inventory_snapshots'),
         showCreateTable($pdo, 'instances'),
     ], '重复执行迁移改变了活动键表结构。');
     integrationAssert($dataBeforeRepeat === [
@@ -313,10 +315,17 @@ try {
         . "OR (table_name='instances' AND column_name IN ('baota_site_external_id','baota_site_root_path','ownership_marker_hash'))) ",
     )->fetchColumn();
     integrationAssert($baotaColumnCount === 11, '005 的宝塔连接与实例所有权字段未完整创建。');
+    $snapshotCheckCount = (int) $pdo->query(
+        "SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = DATABASE() "
+        . "AND table_name='baota_inventory_snapshots' AND constraint_name IN "
+        . "('chk_baota_inventory_snapshots_status','chk_baota_inventory_snapshots_version',"
+        . "'chk_baota_inventory_snapshots_offset') AND constraint_type='CHECK'",
+    )->fetchColumn();
+    integrationAssert($snapshotCheckCount === 3, '006 的宝塔证据快照 CHECK 未完整创建。');
 
     $businessTables = [
         'teams', 'users', 'auth_sessions', 'templates', 'template_versions', 'template_grants',
-        'baota_config', 'cloudflare_connections', 'cloudflare_zones', 'primary_domains', 'domain_grants',
+        'baota_config', 'baota_inventory_snapshots', 'cloudflare_connections', 'cloudflare_zones', 'primary_domains', 'domain_grants',
         'backup_page_assets', 'vendor_component_versions', 'instances', 'instance_owner_history',
         'config_versions', 'site_releases', 'deployment_batches', 'deployment_jobs', 'job_steps',
         'domain_reservations', 'audit_logs',
@@ -329,7 +338,7 @@ try {
     $createdTables = $tableQuery->fetchAll(PDO::FETCH_COLUMN);
     sort($businessTables);
     sort($createdTables);
-    integrationAssert($createdTables === $businessTables, '22 张业务表未全部创建。');
+    integrationAssert($createdTables === $businessTables, '23 张业务表未全部创建。');
     foreach ($businessTables as $table) {
         integrationAssert(
             $pdo->query("SELECT 1 FROM `{$table}` LIMIT 1")->fetchColumn() === false,
@@ -740,6 +749,24 @@ try {
         integrationAssert(is_array($storedBaota), '宝塔单例配置未通过真实 PDO 入库。');
         integrationAssert($baotaService->decryptApiKey($storedBaota) === $baotaSecret, '宝塔 API Key AEAD 回读失败。');
         integrationAssert(!str_contains(json_encode($managedBaota, JSON_THROW_ON_ERROR), $baotaSecret), '宝塔 API Key 泄露到安全响应。');
+        $snapshotId = $ids->generate();
+        $snapshotExpires = gmdate('Y-m-d H:i:s', time() + 300) . '.000000';
+        $repository->insertBaotaInventorySnapshot([
+            'id' => $snapshotId, 'baota_config_id' => $storedBaota['id'], 'config_version' => 1,
+            'inventory_fingerprint' => str_repeat('a', 64), 'site_ids_json' => '[1]',
+            'observations_json' => '{"site_1":{"external_id":1,"domains":["example.invalid"],"status":"supported"}}',
+            'status' => 'collecting', 'next_offset' => 0, 'failure_code' => null,
+            'observed_at' => $now, 'expires_at' => $snapshotExpires, 'version' => 1,
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        integrationAssert($repository->updateBaotaInventorySnapshot($snapshotId, [
+            'status' => 'complete', 'next_offset' => null, 'failure_code' => null, 'updated_at' => $now,
+        ], 1), '宝塔快照乐观锁更新失败。');
+        $snapshot = $repository->findLatestCompleteBaotaInventorySnapshot((string) $storedBaota['id'], 1, $now);
+        integrationAssert(is_array($snapshot) && $snapshot['id'] === $snapshotId && (int) $snapshot['version'] === 2,
+            '宝塔完整证据快照未能通过真实 PDO 回读。');
+        integrationAssert(!$repository->updateBaotaInventorySnapshot($snapshotId, ['updated_at' => $now], 1),
+            '宝塔快照旧版本错误覆盖了新版本。');
         $disabledBaota = $baotaService->save($super, [
             'admin_state' => 'disabled', 'expected_version' => 1,
         ], 'mysql-baota-disable');
@@ -783,9 +810,10 @@ try {
         '003_split_cloudflare_admin_verification_state',
         '004_bind_cloudflare_zone_verification_context',
         '005_baota_readonly_precheck',
+        '006_baota_inventory_evidence_snapshots',
     ], '测试结束后正式迁移账本不完整或含有临时迁移记录。');
     fwrite(STDOUT, 'PASS: Database server ' . $version . '，账号 ' . $currentUser
-        . "；22 表、002/003/004/005、凭据上下文、多 Zone 失效、部署预演零写入、宝塔密文轮换、重复/失败迁移恢复、"
+        . "；23 表、002/003/004/005/006、凭据上下文、多 Zone 失效、部署预演零写入、宝塔密文轮换、分批证据快照、重复/失败迁移恢复、"
         . "FK/CHECK/UNIQUE、PDO Session、负责人事务、单宝塔约束及测试数据清理均通过。\n");
 } catch (Throwable $exception) {
     fwrite(STDERR, 'FAIL: ' . ($connectionSummary === null ? '' : $connectionSummary . '；')

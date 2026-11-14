@@ -323,17 +323,24 @@ return [
         $repository->cloudflareZones[$zone['id']]['verified_credential_context_version'] = 1;
         $repository->cloudflareZones[$zone['id']]['cloudflare_status'] = 'active';
         $transport = new FakeCloudflareTransport(
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_dns', 'name' => 'example.com', 'status' => 'active', 'meta' => ['foundation_dns' => false]]]),
             cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'w1', 'type' => 'A', 'name' => '*.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'w1', 'type' => 'A', 'name' => '*.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_dns', 'name' => 'example.com', 'status' => 'active', 'meta' => ['foundation_dns' => false]]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'c1', 'type' => 'CNAME', 'name' => 'www.pages.example.com', 'content' => 'other.example.net', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'w1', 'type' => 'A', 'name' => '*.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'ns1', 'type' => 'NS', 'name' => 'pages.example.com', 'content' => 'ns.other.test', 'ttl' => 3600]], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'ns1', 'type' => 'NS', 'name' => 'pages.example.com', 'content' => 'ns.other.test', 'ttl' => 3600]], 'result_info' => ['total_pages' => 1]]),
         );
         $service = new CloudflareDnsPrecheckService($repository, $cipher, new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {}), confirmedPublicIpv4: '203.0.113.10');
         $reusable = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
         TestHarness::assertSame('wildcard_covered', $reusable['classification']);
         TestHarness::assertSame('reuse_existing_wildcard', $reusable['dns_strategy']);
+        TestHarness::assertSame('*.example.com', $reusable['applicable_wildcard']);
         TestHarness::assertSame(0, $reusable['dns_records_to_create']);
         $blocked = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
         TestHarness::assertSame('conflict', $blocked['classification']);

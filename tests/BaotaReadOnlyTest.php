@@ -394,6 +394,7 @@ return [
         $discovery = $service->sites($p[SUPER_ID]);
         TestHarness::assertSame('external', $discovery['sites'][0]['ownership']['classification']);
         TestHarness::assertTrue($discovery['inventory']['complete']);
+        $service->siteDetailBatch($p[SUPER_ID], 0, 20);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
         $conflict = $service->precheck($p[SUPER_ID], 'alias.example.test');
         TestHarness::assertSame('conflict', $conflict['classification']);
@@ -440,10 +441,12 @@ return [
         }
         $service = new BaotaReadOnlyService($repository, $configs, $gateway);
         $service->verify($p[SUPER_ID], 1, 'req-verify');
-        $first = $service->sites($p[SUPER_ID]);
+        $first = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
         TestHarness::assertSame(20, $first['batch']['next_offset']);
         TestHarness::assertSame(20, $first['batch']['processed']);
-        $second = $service->siteDetailBatch($p[SUPER_ID], 20, 20);
+        $second = $service->siteDetailBatch(
+            $p[SUPER_ID], 20, 20, $first['batch']['snapshot_id'], $first['batch']['snapshot_version'],
+        );
         TestHarness::assertSame(6, $second['batch']['processed']);
         TestHarness::assertSame(null, $second['batch']['next_offset']);
         TestHarness::assertTrue($second['batch']['complete']);
@@ -463,11 +466,117 @@ return [
         $gateway->failingDomainIds = [7];
         $service = new BaotaReadOnlyService($repository, $configs, $gateway);
         $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $failed = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        TestHarness::assertSame('failed', $failed['batch']['snapshot_status']);
+        TestHarness::assertSame('site_domain_detail_failed', $failed['batch']['failure_code']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
         $result = $service->precheck($p[SUPER_ID], 'unused.example.test');
         TestHarness::assertSame('unsupported', $result['classification']);
         TestHarness::assertFalse($result['inventory']['complete']);
-        TestHarness::assertSame('detail_query_failed', $result['inventory']['reason']);
+        TestHarness::assertSame('complete_server_snapshot_required', $result['inventory']['reason']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota failed first batch cannot be hidden by a later successful request' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 26; $i++) {
+            $gateway->siteRows[] = ['external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}", 'status' => '1', 'metadata_complete' => true];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $gateway->failingDomainIds = [7];
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $first = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        TestHarness::assertSame('failed', $first['batch']['snapshot_status']);
+        $gateway->failingDomainIds = [];
+        $error = TestHarness::assertThrows(static fn () => $service->siteDetailBatch(
+            $p[SUPER_ID], 20, 20, $first['batch']['snapshot_id'], $first['batch']['snapshot_version'],
+        ), ApiException::class);
+        TestHarness::assertSame('baota_snapshot_not_collecting', $error->errorCode);
+    },
+
+    'baota site set changes invalidate an in progress snapshot' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 26; $i++) {
+            $gateway->siteRows[] = ['external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}", 'status' => '1', 'metadata_complete' => true];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $first = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        $gateway->siteRows[25]['name'] = 'changed.example.test';
+        $second = $service->siteDetailBatch(
+            $p[SUPER_ID], 20, 20, $first['batch']['snapshot_id'], $first['batch']['snapshot_version'],
+        );
+        TestHarness::assertSame('failed', $second['batch']['snapshot_status']);
+        TestHarness::assertSame('site_set_changed', $second['batch']['failure_code']);
+        TestHarness::assertFalse($second['inventory']['complete']);
+    },
+
+    'baota complete snapshot still fails closed for unknown directory evidence' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        $gateway->siteRows = [['external_id' => 1, 'name' => 'legacy.example.test', 'path' => '/www/wwwroot/legacy', 'status' => '1', 'metadata_complete' => true]];
+        $gateway->domains[1] = ['status' => 'supported', 'domains' => ['legacy.example.test']];
+        $gateway->directory = ['status' => 'unknown', 'path' => null, 'entry_count' => null, 'has_unknown_entries' => null, 'is_symlink' => null];
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        $result = $service->precheck($p[SUPER_ID], 'new.example.test');
+        TestHarness::assertSame('needs_attention', $result['classification']);
+        TestHarness::assertTrue($result['inventory']['complete']);
+        TestHarness::assertFalse($result['static_deployment_ready']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota precheck rejects an expired complete server snapshot' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        $gateway->siteRows = [['external_id' => 1, 'name' => 'legacy.example.test', 'path' => '/www/wwwroot/legacy', 'status' => '1', 'metadata_complete' => true]];
+        $gateway->domains[1] = ['status' => 'supported', 'domains' => ['legacy.example.test']];
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $complete = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        $repository->baotaInventorySnapshots[$complete['batch']['snapshot_id']]['expires_at'] = '2000-01-01 00:00:00.000000';
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        $result = $service->precheck($p[SUPER_ID], 'new.example.test');
+        TestHarness::assertSame('unsupported', $result['classification']);
+        TestHarness::assertSame('complete_server_snapshot_required', $result['inventory']['reason']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota returns clear only with complete snapshot absent directory and static isolation capabilities' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 26; $i++) {
+            $gateway->siteRows[] = ['external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}", 'status' => '1', 'metadata_complete' => true];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $gateway->directory = [
+            'status' => 'absent', 'path' => null, 'entry_count' => 0, 'has_unknown_entries' => false, 'is_symlink' => false,
+            'parent_authorized' => true, 'nginx_vhost_isolation' => true,
+            'atomic_release_supported' => true, 'static_release_supported' => true,
+        ];
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $first = $service->siteDetailBatch($p[SUPER_ID], 0, 20);
+        $service->siteDetailBatch($p[SUPER_ID], 20, 20, $first['batch']['snapshot_id'], $first['batch']['snapshot_version']);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        $result = $service->precheck($p[SUPER_ID], 'new.example.test');
+        TestHarness::assertSame('clear', $result['classification']);
+        TestHarness::assertTrue($result['inventory']['complete']);
+        TestHarness::assertTrue($result['static_deployment_ready']);
+        TestHarness::assertTrue(is_string($result['inventory']['snapshot_id']) && $result['inventory']['snapshot_id'] !== '');
+        TestHarness::assertSame(26, $gateway->domainCalls);
+        TestHarness::assertFalse($result['mutations_performed']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT');
     },
 

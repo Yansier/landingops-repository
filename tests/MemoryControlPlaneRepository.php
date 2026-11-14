@@ -43,6 +43,8 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
     public array $domainReservations = [];
     /** @var array<string,mixed>|null */
     public ?array $baotaConfig = null;
+    /** @var array<string,array<string,mixed>> */
+    public array $baotaInventorySnapshots = [];
 
     public function transaction(callable $callback): mixed
     {
@@ -62,6 +64,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
             $this->domainGrants,
             $this->domainReservations,
             $this->baotaConfig,
+            $this->baotaInventorySnapshots,
         ]);
         try {
             return $callback();
@@ -82,6 +85,7 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
                 $this->domainGrants,
                 $this->domainReservations,
                 $this->baotaConfig,
+                $this->baotaInventorySnapshots,
             ] = unserialize($snapshot, ['allowed_classes' => false]);
             throw $exception;
         }
@@ -747,6 +751,42 @@ class MemoryControlPlaneRepository implements ControlPlaneRepository
         $this->baotaConfig = array_replace($this->baotaConfig, $changes);
         $this->baotaConfig['version'] = $expectedVersion + 1;
         return true;
+    }
+
+    public function insertBaotaInventorySnapshot(array $snapshot): void
+    {
+        if (isset($this->baotaInventorySnapshots[$snapshot['id']])) {
+            throw new RuntimeException('baota inventory snapshot conflict');
+        }
+        $this->baotaInventorySnapshots[$snapshot['id']] = $snapshot;
+    }
+
+    public function findBaotaInventorySnapshot(string $id): ?array
+    {
+        return $this->baotaInventorySnapshots[$id] ?? null;
+    }
+
+    public function updateBaotaInventorySnapshot(string $id, array $changes, int $expectedVersion): bool
+    {
+        $snapshot = $this->baotaInventorySnapshots[$id] ?? null;
+        if ($snapshot === null || (int) ($snapshot['version'] ?? 0) !== $expectedVersion) {
+            return false;
+        }
+        $this->baotaInventorySnapshots[$id] = array_replace($snapshot, $changes, ['version' => $expectedVersion + 1]);
+        return true;
+    }
+
+    public function findLatestCompleteBaotaInventorySnapshot(string $configId, int $configVersion, string $now): ?array
+    {
+        $matches = array_values(array_filter(
+            $this->baotaInventorySnapshots,
+            static fn (array $snapshot): bool => $snapshot['baota_config_id'] === $configId
+                && (int) $snapshot['config_version'] === $configVersion
+                && $snapshot['status'] === 'complete'
+                && $snapshot['expires_at'] > $now,
+        ));
+        usort($matches, static fn (array $a, array $b): int => [$b['observed_at'], $b['id']] <=> [$a['observed_at'], $a['id']]);
+        return $matches[0] ?? null;
     }
 
     public function insertAudit(array $audit): void

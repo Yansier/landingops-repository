@@ -271,8 +271,8 @@ Cloudflare Zone 详情响应的 `id` 必须与请求的 Zone ID 完全一致。�
 # Phase 1K 通配符与 Preflight 契约
 
 - `POST /api/v1/cloudflare-connections/{id}/zone-discoveries`：仅总管理员、CSRF、`expected_connection_version`。只读列出 Token 范围内 Zone 并筛选最多 20 个根通配符；不登记、不授权。无 Zone List 权限返回 `manual_registration_required`，保留手动模式。
-- `POST /api/v1/primary-domains/{id}/dns-prechecks`：仅总管理员、CSRF。读取精确候选、实际适用通配符和 Zone 内祖先 NS 委派。成功复用返回 `classification=wildcard_covered`、`dns_strategy=reuse_existing_wildcard`，且 create/update/delete 均为 0。
-- `POST /api/v1/settings/baota/site-detail-batches`：仅总管理员、CSRF，接收 `offset>=0` 与 `1<=limit<=20`。返回全部列表、当前批详情状态、`next_offset`、观察时间和零写入声明；失败批不推进 offset。
-- `POST /api/v1/deployment-dry-runs`：状态改为 `ready_for_test_deployment|blocked|needs_attention|unsupported`。响应增加 Zone/连接身份、DNS 策略、证据和 `unsupported` 列表。任何状态都不是执行授权。
+- `POST /api/v1/primary-domains/{id}/dns-prechecks`：仅总管理员、CSRF。读取精确候选、从直接父级到 Zone 根的全部通配符候选、祖先具体记录、NS 委派和 empty non-terminal 证据。Zone 名称服务器模式未知且会影响结论时返回 `unsupported`。成功复用返回 `classification=wildcard_covered`、`dns_strategy=reuse_existing_wildcard`，且 create/update/delete 均为 0。
+- `POST /api/v1/settings/baota/site-detail-batches`：仅总管理员、CSRF，接收 `offset>=0` 与 `1<=limit<=20`。首批必须为 `offset=0`，服务端创建快照并返回 `snapshot_id`、`snapshot_version`、`inventory_fingerprint`、站点 ID 集合身份、观察/失效时间和 `next_offset`；继续批次必须同时提交前两项。每批最多查询 20 个站点，所有观察结果写入私有服务端证据快照。批次失败、版本冲突、快照过期、宝塔配置变化或站点集合/名称/路径变化会使快照失败，后续成功请求不得覆盖失败证据。
+- `POST /api/v1/deployment-dry-runs`：状态为 `ready_for_test_deployment|blocked|needs_attention|unsupported`。`ready_for_test_deployment` 仅在模板及团队授权、静态且无原生后台的 manifest、配置 Schema、Cloudflare 通配符与当前凭据身份、完整且未过期的宝塔服务端快照、目标目录明确不存在、父目录授权、Nginx 边界、原子静态 release 能力全部为真时出现。响应中的 `readiness` 逐项显示结果；未知或 unsupported 的必要能力不能通过。任何状态都不是执行授权。
 
 上述端点均不提供 DNS 或宝塔写动作。精确记录、通配符或委派不满足时不会退化为自动创建 A 记录。

@@ -169,9 +169,12 @@ export interface DnsPrecheckResult {
   dns_records_to_update: 0
   dns_records_to_delete: 0
   applicable_wildcard: string | null
-  records: { exact: DnsRecord[]; wildcard: DnsRecord[]; delegations: DnsRecord[] }
+  wildcard_candidates: string[]
+  nameserver_mode: 'standard'|'advanced'|'unknown'
+  records: { exact: DnsRecord[]; wildcards: Record<string,DnsRecord[]>; ancestors: Record<string,DnsRecord[]> }
   confirmed_public_ipv4: string | null
-  issues: Array<{ code: string; record_id: string | null; message: string }>
+  evidence: { complete:boolean; fresh:boolean; observed_at:string; expires_at:string|null }
+  issues: Array<{ code: string; record_id: string | null; name?: string | null; message: string }>
   limitations: string[]
   message: string
 }
@@ -217,6 +220,7 @@ export interface BaotaSite {
 export interface BaotaInventory {
   complete: boolean
   listing_complete: boolean
+  listing_reason?: string | null
   details_complete: boolean
   reason: string | null
   pages: number
@@ -224,9 +228,16 @@ export interface BaotaInventory {
   detail_query_budget: number
   detail_queries_used: number
   detail_failures: number
+  snapshot_id?: string | null
+  snapshot_version?: number
+  snapshot_status?: 'collecting'|'complete'|'failed'
+  inventory_fingerprint?: string
+  observed_at?: string | null
+  expires_at?: string | null
 }
-export interface BaotaSiteDiscovery { sites: BaotaSite[]; inventory: BaotaInventory; batch?: { offset:number; limit:number; processed:number; complete:boolean; next_offset:number|null; total_sites:number; observed_at:string; write_operations_performed:false } }
-export interface BaotaSiteDetailBatch extends BaotaSiteDiscovery { batch: { offset:number; limit:number; processed:number; complete:boolean; next_offset:number|null; total_sites:number; observed_at:string; write_operations_performed:false } }
+export interface BaotaSiteDiscovery { sites: BaotaSite[]; inventory: BaotaInventory; batch?: BaotaBatchEvidence }
+export interface BaotaBatchEvidence { offset:number; limit:number; processed:number; complete:boolean; next_offset:number|null; total_sites:number; observed_at:string; snapshot_id:string; snapshot_version:number; snapshot_status:'collecting'|'complete'|'failed'; failure_code:string|null; write_operations_performed:false }
+export interface BaotaSiteDetailBatch extends BaotaSiteDiscovery { batch: BaotaBatchEvidence }
 
 export interface BaotaPrecheck {
   hostname: string
@@ -281,6 +292,7 @@ export interface DeploymentDryRun {
   domain: { primary_domain_id: string; fqdn: string; authorization: 'valid' }
   configuration: { valid: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[]; schema_hash: string; submitted_field_count: number; values_returned: false }
   external_checks: { baota: Record<string, unknown>; dns: Record<string, unknown> }
+  readiness: Record<string, boolean>
   plan: { target_path: string | null; steps: Array<{ order: number; kind: string; action: string; execute: false }>; dns: Record<string, unknown>; baota: Record<string, unknown>; files: Record<string, unknown>; ssl: Record<string, unknown> }
   blockers: DryRunIssue[]
   risks: DryRunIssue[]

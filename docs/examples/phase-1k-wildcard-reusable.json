@@ -7,6 +7,16 @@
   "dns_records_to_create": 0,
   "dns_records_to_update": 0,
   "dns_records_to_delete": 0,
+  "readiness": {
+    "template_and_authorization": true,
+    "configuration_valid": true,
+    "dns_wildcard_evidence": true,
+    "baota_complete_inventory": true,
+    "target_directory_absent": true,
+    "static_release_isolation": true,
+    "no_external_writes_performed": true
+  },
   "execute": false,
-  "write_operations_performed": false
+  "write_operations_performed": false,
+  "disclaimer": "示例只表示测试部署前置证据齐全，不构成执行授权。"
 }

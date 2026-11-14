@@ -67,8 +67,8 @@ export const saveBaotaConfig = (input: { base_url?: string; api_key?: string; ad
 export const verifyBaota = (expectedVersion: number) =>
   api<{ config: BaotaConfig; result: Record<string, unknown> }>('/api/v1/settings/baota/verifications', { method: 'POST', body: jsonBody({ expected_version: expectedVersion }) })
 export const listBaotaSites = () => api<BaotaSiteDiscovery>('/api/v1/settings/baota/sites')
-export const loadBaotaSiteDetailBatch = (offset:number, limit=20) =>
-  api<BaotaSiteDetailBatch>('/api/v1/settings/baota/site-detail-batches', { method:'POST', body:jsonBody({ offset, limit }) })
+export const loadBaotaSiteDetailBatch = (offset:number, limit=20, snapshotId?:string, expectedSnapshotVersion?:number) =>
+  api<BaotaSiteDetailBatch>('/api/v1/settings/baota/site-detail-batches', { method:'POST', body:jsonBody({ offset, limit, snapshot_id:snapshotId, expected_snapshot_version:expectedSnapshotVersion }) })
 export const precheckBaota = (hostname: string) =>
   api<BaotaPrecheck>('/api/v1/settings/baota/prechecks', { method: 'POST', body: jsonBody({ hostname }) })
 export const getBaotaIsolation = () => api<BaotaIsolationResult>('/api/v1/settings/baota/isolation-checks')

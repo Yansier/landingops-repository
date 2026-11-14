@@ -35,7 +35,7 @@ final class CloudflareReadOnlyClient
         ];
     }
 
-    /** @return array{id:string,name:string,status:string,account_id:?string,authoritative_nameserver_count:?int} */
+    /** @return array{id:string,name:string,status:string,account_id:?string,authoritative_nameserver_count:?int,nameserver_mode:string} */
     public function zone(string $token, string $zoneId): array
     {
         self::identifier($zoneId);
@@ -60,6 +60,9 @@ final class CloudflareReadOnlyClient
             'authoritative_nameserver_count' => is_array($nameServers)
                 ? count(array_unique(array_map(static fn (string $value): string => strtolower(rtrim($value, '.')), $nameServers)))
                 : null,
+            'nameserver_mode' => is_array($result['meta'] ?? null) && is_bool($result['meta']['foundation_dns'] ?? null)
+                ? ($result['meta']['foundation_dns'] ? 'advanced' : 'standard')
+                : 'unknown',
         ];
     }
 
@@ -102,6 +105,42 @@ final class CloudflareReadOnlyClient
         if (is_array($info) && (int) ($info['total_pages'] ?? 1) > 1) {
             throw new ApiException(502, 'cloudflare_dns_result_incomplete', 'DNS 只读结果超过单页限制，未作安全判断。');
         }
+        $result = $payload['result'] ?? null;
+        if (!is_array($result) || !array_is_list($result)) {
+            throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare DNS 响应格式无效。');
+        }
+        $records = [];
+        foreach ($result as $row) {
+            if (!is_array($row) || !is_string($row['id'] ?? null) || !is_string($row['type'] ?? null)
+                || !is_string($row['name'] ?? null) || !is_string($row['content'] ?? null)) {
+                throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare DNS 记录格式无效。');
+            }
+            $records[] = [
+                'id' => $row['id'], 'type' => strtoupper($row['type']),
+                'name' => strtolower(rtrim($row['name'], '.')), 'content' => $row['content'],
+                'proxied' => is_bool($row['proxied'] ?? null) ? $row['proxied'] : null,
+                'ttl' => is_int($row['ttl'] ?? null) ? $row['ttl'] : null,
+            ];
+        }
+        return $records;
+    }
+
+    /** @return list<array{id:string,type:string,name:string,content:string,proxied:?bool,ttl:?int}> */
+    public function dnsRecordsEndingWith(string $token, string $zoneId, string $hostname): array
+    {
+        self::identifier($zoneId);
+        $path = '/zones/' . rawurlencode($zoneId) . '/dns_records?name.endswith=' . rawurlencode($hostname) . '&per_page=100';
+        $payload = $this->request($path, $token);
+        $info = $payload['result_info'] ?? null;
+        if (is_array($info) && (int) ($info['total_pages'] ?? 1) > 1) {
+            throw new ApiException(502, 'cloudflare_dns_result_incomplete', 'DNS 后缀只读结果超过单页限制，未作安全判断。');
+        }
+        return $this->parseDnsRecords($payload);
+    }
+
+    /** @param array<string,mixed> $payload @return list<array{id:string,type:string,name:string,content:string,proxied:?bool,ttl:?int}> */
+    private function parseDnsRecords(array $payload): array
+    {
         $result = $payload['result'] ?? null;
         if (!is_array($result) || !array_is_list($result)) {
             throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare DNS 响应格式无效。');

@@ -11,7 +11,7 @@ final class StreamCloudflareHttpTransport implements CloudflareHttpTransport
 
     public function get(string $path, string $token, float $timeoutSeconds): CloudflareHttpResponse
     {
-        if (!$this->allowedPath($path)) {
+        if (!self::isAllowedPath($path)) {
             throw new CloudflareTransportException('path_rejected');
         }
         $context = stream_context_create([
@@ -41,12 +41,12 @@ final class StreamCloudflareHttpTransport implements CloudflareHttpTransport
         return new CloudflareHttpResponse($status, $body);
     }
 
-    private function allowedPath(string $path): bool
+    public static function isAllowedPath(string $path): bool
     {
         return $path === '/user/tokens/verify'
             || preg_match('#^/zones/[A-Za-z0-9_-]{1,128}$#D', $path) === 1
             || preg_match(
-                '#^/zones/[A-Za-z0-9_-]{1,128}/dns_records\?name\.exact=[A-Za-z0-9.%_-]+&per_page=100$#D',
+                '#^/zones/[A-Za-z0-9_-]{1,128}/dns_records\?name\.(?:exact|endswith)=[A-Za-z0-9.%_-]+&per_page=100$#D',
                 $path,
             ) === 1;
     }

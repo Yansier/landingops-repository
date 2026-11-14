@@ -440,5 +440,13 @@ return [
         TestHarness::assertContains("WHERE verification_status = 'valid' OR status = 'active'", $sql004);
         TestHarness::assertContains('credential_context_binding_required', $sql004);
         TestHarness::assertNotContains('DROP TABLE', strtoupper($sql004));
+        $sql006 = (string) file_get_contents($migrationDirectory . '/006_baota_inventory_evidence_snapshots.sql');
+        TestHarness::assertContains('CREATE TABLE IF NOT EXISTS baota_inventory_snapshots', $sql006);
+        TestHarness::assertContains('inventory_fingerprint', $sql006);
+        TestHarness::assertContains('site_ids_json', $sql006);
+        TestHarness::assertContains('observations_json', $sql006);
+        TestHarness::assertContains("status IN ('collecting', 'complete', 'failed')", $sql006);
+        TestHarness::assertContains('FOREIGN KEY (baota_config_id) REFERENCES baota_config(id)', $sql006);
+        TestHarness::assertNotContains('DROP TABLE', strtoupper($sql006));
     },
 ];

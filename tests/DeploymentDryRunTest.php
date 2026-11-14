@@ -7,9 +7,14 @@ namespace LandingOps\Tests;
 use LandingOps\ControlPlane\Auth\AuthorizationService;
 use LandingOps\ControlPlane\Auth\SessionService;
 use LandingOps\ControlPlane\Exception\ApiException;
+use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
 use LandingOps\ControlPlane\Http\ControlPlaneKernel;
 use LandingOps\ControlPlane\Http\Request;
 use LandingOps\ControlPlane\Service\AccountService;
+use LandingOps\ControlPlane\Security\AeadSecretCipher;
+use LandingOps\ControlPlane\Service\BaotaConfigService;
+use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
+use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\ConfigFormSchemaBuilder;
 use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
@@ -47,7 +52,7 @@ function dryRunFixture(): array
     ];
     $repository->cloudflareZones[$zoneId] = [
         'id' => $zoneId, 'connection_id' => $connectionId, 'zone_name' => 'example.test',
-        'normalized_zone_name' => 'example.test', 'status' => 'active', 'admin_state' => 'enabled',
+        'normalized_zone_name' => 'example.test', 'external_zone_id' => 'zone_test', 'status' => 'active', 'admin_state' => 'enabled',
         'verification_status' => 'valid', 'verified_credential_context_version' => 2,
         'cloudflare_status' => 'active',
     ];
@@ -157,6 +162,51 @@ return [
         ));
         TestHarness::assertSame(200, $response->status);
         TestHarness::assertFalse($response->body['data']['mutations_performed']);
+    },
+
+    'dry run becomes ready only with complete fresh dns baota directory and static release evidence' => static function (): void {
+        [$repository, $p, $versionId, $domainId] = dryRunFixture();
+        $cipher = new AeadSecretCipher(['v1' => str_repeat('d', 32)], 'v1');
+        $connectionId = (string) array_key_first($repository->cloudflareConnections);
+        $sealed = $cipher->encrypt('synthetic-token', 'landingops:cloudflare-token:' . $connectionId);
+        $repository->cloudflareConnections[$connectionId]['token_ciphertext'] = $sealed['ciphertext'];
+        $repository->cloudflareConnections[$connectionId]['secret_key_version'] = $sealed['key_version'];
+        $transport = new FakeCloudflareTransport(
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_test', 'name' => 'example.test', 'status' => 'active', 'meta' => ['foundation_dns' => false]]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'wild-specific', 'type' => 'A', 'name' => '*.pages.example.test', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+        );
+        $dns = new CloudflareDnsPrecheckService(
+            $repository, $cipher, new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {}),
+            confirmedPublicIpv4: '203.0.113.10',
+        );
+
+        $baotaCipher = new AeadSecretCipher(['v1' => str_repeat('b', 32)], 'v1');
+        $configs = new BaotaConfigService($repository, $baotaCipher);
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-key'], 'baota-create');
+        $gateway = new FakeBaotaGateway();
+        $gateway->directory = [
+            'status' => 'absent', 'path' => null, 'entry_count' => 0, 'has_unknown_entries' => false, 'is_symlink' => false,
+            'parent_authorized' => true, 'nginx_vhost_isolation' => true,
+            'atomic_release_supported' => true, 'static_release_supported' => true,
+        ];
+        $baota = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $baota->verify($p[SUPER_ID], 1, 'baota-verify');
+        $baota->siteDetailBatch($p[SUPER_ID], 0, 20);
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
+        $before = serialize([$repository->instances, $repository->domainReservations]);
+        $result = (new DeploymentDryRunService($repository, $baota, dns: $dns))->run(
+            $p[STAFF_A_ID], validDryRunInput($versionId, $domainId),
+        );
+        TestHarness::assertSame('ready_for_test_deployment', $result['status']);
+        TestHarness::assertFalse(in_array(false, array_values($result['readiness']), true));
+        TestHarness::assertSame(0, $result['plan']['dns']['dns_records_to_create']);
+        TestHarness::assertFalse($result['mutations_performed']);
+        TestHarness::assertSame($before, serialize([$repository->instances, $repository->domainReservations]));
+        putenv('LANDINGOPS_BAOTA_SITE_ROOT');
     },
 
     'config form builder preserves optional ancestry and scalar array item types' => static function (): void {

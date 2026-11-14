@@ -355,6 +355,8 @@ final class ControlPlaneKernel
                 $principal,
                 $this->integer($request->body, 'offset'),
                 $this->integer($request->body, 'limit'),
+                $this->nullableString($request->body, 'snapshot_id'),
+                $this->nullableInteger($request->body, 'expected_snapshot_version'),
             ), $requestId);
         }
         if ($method === 'POST' && $path === '/api/v1/settings/baota/prechecks') {
@@ -534,6 +536,19 @@ final class ControlPlaneKernel
         $value = $body[$key] ?? null;
         if (!is_int($value)) {
             throw new ApiException(400, 'input_invalid', '缺少或无效字段：' . $key);
+        }
+        return $value;
+    }
+
+    /** @param array<string,mixed> $body */
+    private function nullableInteger(array $body, string $key): ?int
+    {
+        $value = $body[$key] ?? null;
+        if ($value === null) {
+            return null;
+        }
+        if (!is_int($value)) {
+            throw new ApiException(400, 'input_invalid', '无效字段：' . $key);
         }
         return $value;
     }

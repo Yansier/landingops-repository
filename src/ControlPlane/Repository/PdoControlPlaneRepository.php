@@ -690,6 +690,61 @@ final class PdoControlPlaneRepository implements ControlPlaneRepository
         )->rowCount() === 1;
     }
 
+    public function insertBaotaInventorySnapshot(array $snapshot): void
+    {
+        $this->execute(
+            'INSERT INTO baota_inventory_snapshots(id,baota_config_id,config_version,inventory_fingerprint,'
+            . 'site_ids_json,observations_json,status,next_offset,failure_code,observed_at,expires_at,version,created_at,updated_at) '
+            . 'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [
+                $snapshot['id'], $snapshot['baota_config_id'], $snapshot['config_version'],
+                $snapshot['inventory_fingerprint'], $snapshot['site_ids_json'], $snapshot['observations_json'],
+                $snapshot['status'], $snapshot['next_offset'], $snapshot['failure_code'], $snapshot['observed_at'],
+                $snapshot['expires_at'], $snapshot['version'], $snapshot['created_at'], $snapshot['updated_at'],
+            ],
+        );
+    }
+
+    public function findBaotaInventorySnapshot(string $id): ?array
+    {
+        return $this->one('SELECT * FROM baota_inventory_snapshots WHERE id=?', [$id]);
+    }
+
+    public function updateBaotaInventorySnapshot(string $id, array $changes, int $expectedVersion): bool
+    {
+        $allowed = [
+            'inventory_fingerprint', 'site_ids_json', 'observations_json', 'status', 'next_offset',
+            'failure_code', 'observed_at', 'expires_at', 'updated_at',
+        ];
+        $set = [];
+        $parameters = [];
+        foreach ($allowed as $column) {
+            if (array_key_exists($column, $changes)) {
+                $set[] = $column . '=?';
+                $parameters[] = $changes[$column];
+            }
+        }
+        if ($set === []) {
+            return false;
+        }
+        $parameters[] = $id;
+        $parameters[] = $expectedVersion;
+        return $this->execute(
+            'UPDATE baota_inventory_snapshots SET ' . implode(',', $set)
+            . ',version=version+1 WHERE id=? AND version=?',
+            $parameters,
+        )->rowCount() === 1;
+    }
+
+    public function findLatestCompleteBaotaInventorySnapshot(string $configId, int $configVersion, string $now): ?array
+    {
+        return $this->one(
+            "SELECT * FROM baota_inventory_snapshots WHERE baota_config_id=? AND config_version=? "
+            . "AND status='complete' AND expires_at>? ORDER BY observed_at DESC,id DESC LIMIT 1",
+            [$configId, $configVersion, $now],
+        );
+    }
+
     public function insertAudit(array $audit): void
     {
         $metadata = json_encode($audit['metadata_json'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);

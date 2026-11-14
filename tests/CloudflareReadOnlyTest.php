@@ -7,6 +7,7 @@ namespace LandingOps\Tests;
 use LandingOps\ControlPlane\Cloudflare\CloudflareHttpResponse;
 use LandingOps\ControlPlane\Cloudflare\CloudflareHttpTransport;
 use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
+use LandingOps\ControlPlane\Cloudflare\StreamCloudflareHttpTransport;
 use LandingOps\ControlPlane\Cloudflare\CloudflareTransportException;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Service\CloudflareCompatibilityDiagnostic;
@@ -44,6 +45,13 @@ function cfResponse(int $status, array $payload = []): CloudflareHttpResponse
 
 /** @return array<string,\Closure> */
 return [
+    'cloudflare transport permits only fixed exact and suffix dns read filters' => static function (): void {
+        TestHarness::assertTrue(StreamCloudflareHttpTransport::isAllowedPath('/zones/zone_1/dns_records?name.exact=www.example.com&per_page=100'));
+        TestHarness::assertTrue(StreamCloudflareHttpTransport::isAllowedPath('/zones/zone_1/dns_records?name.endswith=pages.example.com&per_page=100'));
+        TestHarness::assertFalse(StreamCloudflareHttpTransport::isAllowedPath('/zones/zone_1/dns_records?name.contains=example.com&per_page=100'));
+        TestHarness::assertFalse(StreamCloudflareHttpTransport::isAllowedPath('/zones/zone_1/dns_records?name.endswith=example.com&per_page=100&page=2'));
+        TestHarness::assertFalse(StreamCloudflareHttpTransport::isAllowedPath('https://attacker.invalid/zones/zone_1'));
+    },
     'cloudflare compatibility diagnostic checks exact wildcard and apex without exposing secrets' => static function (): void {
         $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
@@ -66,18 +74,22 @@ return [
     'cloudflare read only client verifies token zone and exact dns path' => static function (): void {
         $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
-            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'Example.COM.', 'status' => 'active', 'account' => ['id' => 'acct_1'], 'name_servers' => ['ada.ns.cloudflare.com']]]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'Example.COM.', 'status' => 'active', 'account' => ['id' => 'acct_1'], 'name_servers' => ['ada.ns.cloudflare.com'], 'meta' => ['foundation_dns' => true]]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'dns_1', 'type' => 'A', 'name' => 'www.example.com', 'content' => '203.0.113.10', 'proxied' => true, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'dns_2', 'type' => 'TXT', 'name' => 'child.www.example.com', 'content' => 'marker', 'ttl' => 300]], 'result_info' => ['total_pages' => 1]]),
         );
         $client = new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {});
         TestHarness::assertSame('active', $client->verifyToken('synthetic-token')['status']);
         $zone = $client->zone('synthetic-token', 'zone_1');
         TestHarness::assertSame('example.com', $zone['name']);
         TestHarness::assertSame(1, $zone['authoritative_nameserver_count']);
+        TestHarness::assertSame('advanced', $zone['nameserver_mode']);
         TestHarness::assertSame('A', $client->dnsRecords('synthetic-token', 'zone_1', 'www.example.com')[0]['type']);
+        TestHarness::assertSame('TXT', $client->dnsRecordsEndingWith('synthetic-token', 'zone_1', 'www.example.com')[0]['type']);
         TestHarness::assertSame('/user/tokens/verify', $transport->paths[0]);
         TestHarness::assertSame('/zones/zone_1', $transport->paths[1]);
         TestHarness::assertContains('/zones/zone_1/dns_records?name.exact=www.example.com', $transport->paths[2]);
+        TestHarness::assertContains('/zones/zone_1/dns_records?name.endswith=www.example.com', $transport->paths[3]);
     },
 
     'cloudflare read only errors map 401 403 429 timeout and inactive token' => static function (): void {

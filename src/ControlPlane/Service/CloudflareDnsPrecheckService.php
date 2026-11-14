@@ -16,6 +16,8 @@ use Throwable;
 
 final class CloudflareDnsPrecheckService
 {
+    private const MAX_ANCESTOR_DEPTH = 10;
+
     public function __construct(
         private readonly ControlPlaneRepository $repository,
         private readonly ?AeadSecretCipher $cipher,
@@ -81,15 +83,30 @@ final class CloudflareDnsPrecheckService
         }
         $zoneName = strtolower((string) $zone['normalized_zone_name']);
         $zoneExternalId = (string) $zone['external_zone_id'];
-        $wildcardName = WildcardDnsPolicyEvaluator::applicableWildcard($hostname, $zoneName);
+        $zoneEvidence = $this->client->zone($token, $zoneExternalId);
+        if (!hash_equals($zoneName, $zoneEvidence['name'])) {
+            throw new ApiException(409, 'cloudflare_zone_mismatch', 'Cloudflare Zone 名称与登记资源不一致。');
+        }
+        $ancestors = WildcardDnsPolicyEvaluator::ancestorNames($hostname, $zoneName);
+        $wildcardCandidates = WildcardDnsPolicyEvaluator::wildcardCandidates($hostname, $zoneName);
+        if (count($ancestors) > self::MAX_ANCESTOR_DEPTH) {
+            throw new ApiException(422, 'dns_evidence_budget_exceeded', '候选名称层级超过只读证据预算。');
+        }
         $exact = $this->client->dnsRecords($token, $zoneExternalId, $hostname);
-        $wildcard = $wildcardName === null ? [] : $this->client->dnsRecords($token, $zoneExternalId, $wildcardName);
-        $delegations = [];
-        foreach ($this->delegationNames($hostname, $zoneName) as $name) {
-            foreach ($this->client->dnsRecords($token, $zoneExternalId, $name) as $record) {
-                if ($record['type'] === 'NS') {
-                    $delegations[] = $record;
-                }
+        $wildcards = [];
+        foreach ($wildcardCandidates as $candidate) {
+            $wildcards[$candidate] = $this->client->dnsRecords($token, $zoneExternalId, $candidate);
+        }
+        $ancestorRecords = [];
+        $emptyNonTerminals = [];
+        foreach ($ancestors as $name) {
+            $ancestorRecords[$name] = $this->client->dnsRecords($token, $zoneExternalId, $name);
+            $below = $this->client->dnsRecordsEndingWith($token, $zoneExternalId, $name);
+            if ($ancestorRecords[$name] === [] && array_filter(
+                $below,
+                static fn (array $record): bool => $record['name'] !== $name && str_ends_with($record['name'], '.' . $name),
+            ) !== []) {
+                $emptyNonTerminals[] = $name;
             }
         }
         $observedAt = gmdate('c');
@@ -98,8 +115,10 @@ final class CloudflareDnsPrecheckService
             $zoneName,
             $this->confirmedPublicIpv4,
             $exact,
-            $wildcard,
-            $delegations,
+            $wildcards,
+            $ancestorRecords,
+            $emptyNonTerminals,
+            $zoneEvidence['nameserver_mode'],
             true,
             $observedAt,
         );
@@ -117,16 +136,4 @@ final class CloudflareDnsPrecheckService
         return $result;
     }
 
-    /** @return list<string> */
-    private function delegationNames(string $hostname, string $zoneName): array
-    {
-        $labels = explode('.', strtolower(rtrim($hostname, '.')));
-        $zoneLabels = explode('.', strtolower(rtrim($zoneName, '.')));
-        $names = [];
-        while (count($labels) > count($zoneLabels) + 1) {
-            array_shift($labels);
-            $names[] = implode('.', $labels);
-        }
-        return $names;
-    }
 }

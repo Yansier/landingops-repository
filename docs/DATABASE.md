@@ -93,6 +93,15 @@ erDiagram
 - 不出现 `servers`、`server_pool_id`、权重或自动选择字段。
 - API Key 只存密文；`base_url` 仅允许管理员配置并防 SSRF，实际值不写示例。
 
+### `baota_inventory_snapshots`（006）
+
+`id`, `baota_config_id`, `config_version`, `inventory_fingerprint`, `site_ids_json`, `observations_json`, `status(collecting|complete|failed)`, `next_offset NULL`, `failure_code NULL`, `observed_at`, `expires_at`, `version`, `created_at`, `updated_at`。
+
+- 服务端保存跨批次站点 ID 集合、清单身份和每站域名观察，浏览器不能自行拼接后宣称完整。
+- `config_version` 将证据绑定到当前单宝塔配置；完整快照查找同时要求状态、版本与未过期时间。
+- `version` 用于批次乐观锁。失败快照不可恢复为 complete；重新采集必须创建新快照。
+- 外键指向唯一 `baota_config`；CHECK 保证 collecting/complete/failed 与 `next_offset`、`failure_code` 的组合一致。
+
 ## 6. Cloudflare 与主域名
 
 ### `cloudflare_connections`
