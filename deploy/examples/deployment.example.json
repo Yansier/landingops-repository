@@ -5,7 +5,7 @@
   "target": {
     "ssh_host": "192.0.2.10",
     "ssh_port": 22,
-    "ssh_user": "landingops-deploy",
+    "ssh_user": "landingops-audit",
     "ssh_host_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "baota_https_origin": "https://panel.example.invalid:8888",
     "expected_baota_version": "8.0.7"

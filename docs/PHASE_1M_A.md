@@ -19,7 +19,7 @@ Phase 1M-A 只建立和验证 LandingOps 平台自身的 Linux 只读环境采�
 
 入口：`bin/landingops-remote-doctor`；Windows 安全入口：`scripts/Invoke-RemoteEnvironmentDiagnostic.ps1`。
 
-采集器只提供 `collect`、`verify` 和 `plan`，没有任意命令参数。OpenSSH Transport 内部固定以下探针类别：
+采集器只提供 `collect`、`verify` 和 `plan`，没有任意命令参数。Phase 1M-A.1 已将传输升级为 `landingops-readonly collect v2` forced-command 协议：客户端不再通过 stdin 发送 shell，服务端设计见 [Phase 1M-A.1](PHASE_1M_A1.md)。固定 probe 内部包含以下探针类别：
 
 - `id`、`uname`、`/etc/os-release`；
 - PHP CLI 扩展、宝塔/系统 PHP 与 PHP-FPM 版本矩阵；
@@ -29,7 +29,7 @@ Phase 1M-A 只建立和验证 LandingOps 平台自身的 Linux 只读环境采�
 - MariaDB/MySQL 客户端与服务端二进制版本；
 - 宝塔版本文件。
 
-探针不运行 `sudo`，不执行 `nginx -t/reload`，不连接数据库，不读取网站文件内容，也不支持上传或远端写入。
+探针不运行 `sudo`，不执行 `nginx -t/reload`，不连接数据库，不读取网站文件内容，也不支持上传或远端写入。受保护的 vhost 信息仅允许使用 root 另行生成的短时脱敏摘要，不扩大账号目录权限。
 
 ## 3. 主机身份保护
 
@@ -39,7 +39,7 @@ Phase 1M-A 只建立和验证 LandingOps 平台自身的 Linux 只读环境采�
 4. 正式 SSH 会话使用 `StrictHostKeyChecking=yes`、禁用 DNS HostKey、更新 HostKey、ProxyCommand 和用户 SSH config。
 5. 未知或变化的 Host Key 直接停止，不自动接受或替换。
 
-SSH 私钥不作为命令行参数；优先使用系统 SSH Agent。密码认证由系统 OpenSSH 在本地控制台交互处理，不进入 PHP、仓库、JSON 或日志。
+SSH 私钥不作为命令行参数，只允许系统 SSH Agent 提供专用公钥身份。v2 客户端明确关闭密码和键盘交互认证，避免自动化身份退化为共享管理员密码。
 
 ## 4. 可信证据契约
 
@@ -71,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -Output C:\private\landingops-remote-evidence.json
 ```
 
-脚本先隐藏输入临时证据签名密钥。若 SSH Agent 未提供身份，系统 OpenSSH 可在控制台进行自身的交互认证。凭据不会成为 CLI 参数。
+脚本先隐藏输入临时证据签名密钥。专用 Ed25519 私钥应由 `scripts/New-LandingOpsAuditKey.ps1` 在仓库外生成并显式加入 SSH Agent；Agent 未提供获授权身份时直接失败，不回退到密码认证。凭据不会成为 CLI 参数。
 
 验证和生成计划必须再次使用同一临时证据密钥：
 
@@ -88,14 +88,15 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 当前历史管理员连接为 root，不能作为默认自动化身份。创建账号属于服务器修改，本阶段不执行。建议由操作者另行审批：
 
-- 独立账号，例如 `landingops-audit`，UID/GID 非 0，无 sudo、无 Docker、无面板管理组权限；
-- 仅允许 SSH Agent/专用公钥或一次性交互密码；禁止端口、Agent、X11 转发；
-- 只需执行本文固定的系统元数据命令；
-- 只读访问 `/etc/os-release`、PHP/Nginx/MariaDB 版本二进制、`/srv` 元数据以及宝塔 Nginx vhost 配置和版本文件；
+- 独立账号 `landingops-audit`，UID/GID 非 0，无 sudo、Docker、www 或面板管理组权限，密码锁定，login shell 固定为 root-owned wrapper；
+- 仅允许专用 Ed25519 公钥；`authorized_keys` 使用 `restrict` 和精确 forced-command；
+- wrapper、probe、home、`.ssh` 和 `authorized_keys` 均由 root 持有且账号不可写；
+- 只执行版本化固定探针，不接受 shell、SCP、SFTP、TTY、转发或客户端 stdin；
+- 只读访问 `/etc/os-release`、PHP/Nginx/MariaDB 版本二进制和 `/srv` 元数据；
 - 不授予网站内容、数据库数据、密钥、日志或写目录权限；
-- 若宝塔配置当前不可读，优先用精确 ACL/只读组授权所需配置目录，不授予通配 sudo；变更前单独审查实际路径。
+- 宝塔 vhost 不向账号开放；由 root 固定摘要工具仅输出路径和完整性计数。
 
-创建账号、修改 ACL/sshd/authorized_keys 均留待操作者明确授权，不能由诊断工具执行。
+创建账号及写入 `authorized_keys` 留待操作者明确授权；方案不修改 ACL 或 `sshd_config`。
 
 ## 7. 只读无法证明的能力
 
@@ -113,8 +114,8 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 ## 8. 自动化验收
 
-- PHP：144 项通过，0 失败；其中 Phase 1M-A 新增 14 项固定 SSH Transport 与证据契约测试。
-- PHP 语法：121 个文件通过。
+- PHP：151 项通过，0 失败；Phase 1M-A/A.1 共 21 项固定 SSH、forced-command、权限边界与证据契约测试。
+- PHP 语法：123 个文件通过。
 - Composer `validate --strict`：通过。
 - Vue/Vitest：30 项通过；TypeScript 和 Vite production build 通过。
 - Release ZIP 与逐文件 SHA-256 manifest：通过本地构建验证。

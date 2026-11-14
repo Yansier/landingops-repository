@@ -6,8 +6,9 @@ namespace LandingOps\Deployment;
 
 final class SshEnvironmentCollector
 {
-    public const VERSION = 'phase-1m-a/1.0';
+    public const VERSION = 'phase-1m-a1/2.0';
     private const REQUIRED_PROBES = [
+        'protocol_version', 'command_policy_id', 'write_operations_performed',
         'identity_user', 'identity_uid', 'identity_gid', 'identity_group', 'os_release', 'architecture',
         'php_version', 'php_extensions', 'php_fpm_versions', 'php_runtime_matrix', 'nginx_version', 'nginx_vhost_capability',
         'disk', 'filesystem', 'target_state', 'installation_marker', 'parent_stat', 'ancestor_symlinks', 'acl_summary',
@@ -34,6 +35,7 @@ final class SshEnvironmentCollector
             throw new DeploymentException('ssh_host_key_mismatch', 'SSH 主机指纹与部署配置不一致。');
         }
         $probes = is_array($session['probes'] ?? null) ? $session['probes'] : [];
+        $this->assertHandshake($probes);
         $errors = [];
         foreach (self::REQUIRED_PROBES as $probe) {
             $result = $probes[$probe] ?? null;
@@ -167,6 +169,23 @@ final class SshEnvironmentCollector
             'write_operations_performed' => false,
         ];
         return $this->signer->sign($evidence, $signingKey);
+    }
+
+    /** @param array<string,mixed> $probes */
+    private function assertHandshake(array $probes): void
+    {
+        $expected = [
+            'protocol_version' => OpenSshReadOnlyTransport::PROTOCOL_VERSION,
+            'command_policy_id' => OpenSshReadOnlyTransport::POLICY_ID,
+            'write_operations_performed' => 'false',
+        ];
+        foreach ($expected as $name => $value) {
+            $probe = $probes[$name] ?? null;
+            if (!is_array($probe) || ($probe['exit_code'] ?? 1) !== 0 || ($probe['timed_out'] ?? true)
+                || !is_string($probe['stdout'] ?? null) || !hash_equals($value, trim($probe['stdout']))) {
+                throw new DeploymentException('ssh_probe_handshake_mismatch', '服务端 fixed-command 协议或只读策略身份不匹配。', ['probe' => $name]);
+            }
+        }
     }
 
     /** @return array{probe:string,category:string,message:string} */

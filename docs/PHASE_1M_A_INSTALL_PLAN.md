@@ -9,13 +9,14 @@
 
 ## 需要人工准备
 
-1. 审批并创建非 root 专用只读 SSH 账号，按 Phase 1M-A 文档授予最小读取权限。
+1. 审批并创建非 root `landingops-audit`，安装 root-owned v2 forced-command wrapper/probe，并写入受 `restrict` 保护的单一 Ed25519 公钥；精确清单和回退见 Phase 1M-A.1。
 2. 在仓库外准备真实部署配置，记录已核对 SSH 指纹，不保存任何密码或私钥。
 3. 运行一次真实 `collect`，确认 `/srv/landingops` 状态、26 个外部站点根路径、PHP/Nginx、磁盘和数据库二进制。
 4. 对只读证据中的 blockers、pending 和过期时间进行人工复核。
 
 ## 必须单独授权的服务器修改
 
+- 创建 `landingops-audit`、写入 authorized_keys、安装 wrapper/probe 和生成脱敏站点摘要；
 - 创建 `/srv/landingops` 与 releases/current/staging/shared/backups；
 - 创建未来专用部署账号并设置 owner/group/ACL；
 - 创建生产数据库和最小数据库账号；

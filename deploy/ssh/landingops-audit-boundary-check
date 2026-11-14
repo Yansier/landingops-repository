@@ -1,0 +1,77 @@
+#!/bin/sh
+set -fu
+export LANG=C LC_ALL=C
+
+ACCOUNT='landingops-audit'
+HOME_DIR='/var/lib/landingops-audit'
+AUTHORIZED_KEYS="$HOME_DIR/.ssh/authorized_keys"
+WRAPPER='/usr/local/libexec/landingops-readonly-wrapper'
+PROBE='/usr/local/libexec/landingops-readonly-probe-v2'
+
+[ "$(/usr/bin/id -u)" -eq 0 ] || exit 77
+
+check_file() {
+    path=$1 expected_owner=$2 expected_group=$3 expected_mode=$4 expected_type=$5
+    [ ! -L "$path" ] || return 1
+    actual=$(/usr/bin/stat -Lc '%U|%G|%a|%F' -- "$path" 2>/dev/null) || return 1
+    [ "$actual" = "$expected_owner|$expected_group|$expected_mode|$expected_type" ]
+}
+
+entry=$(/usr/bin/getent passwd "$ACCOUNT") || exit 78
+uid=$(printf '%s' "$entry" | /usr/bin/cut -d: -f3)
+gid=$(printf '%s' "$entry" | /usr/bin/cut -d: -f4)
+home=$(printf '%s' "$entry" | /usr/bin/cut -d: -f6)
+shell=$(printf '%s' "$entry" | /usr/bin/cut -d: -f7)
+groups=$(/usr/bin/id -Gn "$ACCOUNT")
+password_state=$(/usr/bin/passwd -S "$ACCOUNT" 2>/dev/null | /usr/bin/awk '{print $2}')
+key_lines=$(/usr/bin/awk 'NF && $1 !~ /^#/' "$AUTHORIZED_KEYS" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+key_policy_ok=false
+if [ "$key_lines" = 1 ] && /usr/bin/grep -Eq '^restrict,command="/usr/local/libexec/landingops-readonly-wrapper" ssh-ed25519 [A-Za-z0-9+/=]+ landingops-audit(@[A-Za-z0-9._-]+)?$' "$AUTHORIZED_KEYS"; then
+    key_policy_ok=true
+fi
+sshd_effective=$(/usr/sbin/sshd -T -C "user=$ACCOUNT,host=localhost,addr=127.0.0.1" 2>/dev/null) || sshd_effective=''
+pubkey_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="pubkeyauthentication" {print $2; exit}')
+authorized_keys_file=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="authorizedkeysfile" {print $2; exit}')
+password_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="passwordauthentication" {print $2; exit}')
+kbd_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="kbdinteractiveauthentication" {print $2; exit}')
+
+non_root=false; [ "$uid" -ne 0 ] && [ "$gid" -ne 0 ] && non_root=true
+primary_group_only=false; [ "$groups" = "$ACCOUNT" ] && primary_group_only=true
+password_locked=false; [ "$password_state" = L ] && password_locked=true
+home_matches=false; [ "$home" = "$HOME_DIR" ] && home_matches=true
+shell_matches=false; [ "$shell" = "$WRAPPER" ] && shell_matches=true
+home_boundary=false; check_file "$HOME_DIR" root root 755 directory && home_boundary=true
+ssh_boundary=false; check_file "$HOME_DIR/.ssh" root root 755 directory && ssh_boundary=true
+authorized_keys_boundary=false; check_file "$AUTHORIZED_KEYS" root root 644 'regular file' && authorized_keys_boundary=true
+wrapper_boundary=false; check_file "$WRAPPER" root root 755 'regular file' && wrapper_boundary=true
+probe_boundary=false; check_file "$PROBE" root root 755 'regular file' && probe_boundary=true
+effective_policy_ok=false
+if [ "$pubkey_auth" = yes ] && /usr/bin/printf '%s\n' "$authorized_keys_file" | /usr/bin/grep -Eq '(^| )\.ssh/authorized_keys( |$)'; then
+    effective_policy_ok=true
+fi
+boundary_safe=true
+for value in "$non_root" "$primary_group_only" "$password_locked" "$home_matches" "$shell_matches" "$home_boundary" "$ssh_boundary" "$authorized_keys_boundary" "$wrapper_boundary" "$probe_boundary" "$key_policy_ok" "$effective_policy_ok"; do
+    [ "$value" = true ] || boundary_safe=false
+done
+
+printf 'account=%s\n' "$ACCOUNT"
+printf 'non_root=%s\n' "$non_root"
+printf 'primary_group_only=%s\n' "$primary_group_only"
+printf 'password_locked=%s\n' "$password_locked"
+printf 'home_matches=%s\n' "$home_matches"
+printf 'shell_matches=%s\n' "$shell_matches"
+printf 'home_boundary=%s\n' "$home_boundary"
+printf 'ssh_boundary=%s\n' "$ssh_boundary"
+printf 'authorized_keys_boundary=%s\n' "$authorized_keys_boundary"
+printf 'wrapper_boundary=%s\n' "$wrapper_boundary"
+printf 'probe_boundary=%s\n' "$probe_boundary"
+printf 'authorized_key_policy=%s\n' "$key_policy_ok"
+printf 'effective_policy_ok=%s\n' "$effective_policy_ok"
+printf 'effective_pubkey_authentication=%s\n' "${pubkey_auth:-unknown}"
+printf 'effective_authorized_keys_path=%s\n' "${authorized_keys_file:-unknown}"
+printf 'effective_password_authentication=%s\n' "${password_auth:-unknown}"
+printf 'effective_keyboard_interactive=%s\n' "${kbd_auth:-unknown}"
+printf 'boundary_safe=%s\n' "$boundary_safe"
+printf 'sshd_config_modified=false\n'
+printf 'write_operations_performed=false\n'
+[ "$boundary_safe" = true ] || exit 79

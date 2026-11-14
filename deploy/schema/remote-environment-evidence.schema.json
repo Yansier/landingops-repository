@@ -14,7 +14,7 @@
     "schema_version": {"const": "landingops-remote-evidence/1.0"},
     "source": {"const": "trusted_ssh_readonly_collector"},
     "trust_level": {"const": "verified_read_only_session"},
-    "collector_version": {"const": "phase-1m-a/1.0"},
+    "collector_version": {"const": "phase-1m-a1/2.0"},
     "classification": {"enum": ["readonly_verified_with_pending_writes", "readonly_blocked"]},
     "observed_at": {"type": "string", "format": "date-time"},
     "expires_at": {"type": "string", "format": "date-time"},
@@ -46,7 +46,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["id", "probe_count", "arbitrary_commands_allowed"],
       "properties": {
-        "id": {"const": "landingops-linux-readonly-v1"},
+        "id": {"const": "landingops-linux-readonly-v2"},
         "probe_count": {"type": "integer", "minimum": 1},
         "arbitrary_commands_allowed": {"const": false}
       }

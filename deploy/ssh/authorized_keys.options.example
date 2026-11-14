@@ -1,0 +1,1 @@
+restrict,command="/usr/local/libexec/landingops-readonly-wrapper" ssh-ed25519 REPLACE_WITH_PUBLIC_KEY landingops-audit@landingops

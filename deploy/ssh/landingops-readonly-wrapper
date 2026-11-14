@@ -1,0 +1,29 @@
+#!/bin/sh
+set -fu
+
+EXPECTED_COMMAND='landingops-readonly collect v2'
+PROBE='/usr/local/libexec/landingops-readonly-probe-v2'
+
+# The forced command is the entire authorization boundary. Never evaluate it.
+if [ "${SSH_ORIGINAL_COMMAND-}" != "$EXPECTED_COMMAND" ]; then
+    exit 64
+fi
+if [ -n "${SSH_TTY-}" ]; then
+    exit 65
+fi
+
+# Client input is deliberately discarded. The fixed probe receives no arguments.
+exec </dev/null
+if [ ! -f "$PROBE" ] || [ -L "$PROBE" ] || [ ! -x "$PROBE" ]; then
+    exit 66
+fi
+probe_stat=$(/usr/bin/stat -Lc '%U|%a' -- "$PROBE" 2>/dev/null) || exit 66
+case "$probe_stat" in
+    root\|755|root\|750) ;;
+    *) exit 66 ;;
+esac
+
+exec /usr/bin/env -i \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    LANG=C LC_ALL=C HOME=/var/lib/landingops-audit \
+    /usr/bin/timeout 45 "$PROBE"

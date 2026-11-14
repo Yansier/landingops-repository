@@ -1,0 +1,155 @@
+#!/bin/sh
+set -fu
+export LANG=C LC_ALL=C
+umask 077
+
+INSTALL_ROOT='/srv/landingops'
+INSTALL_PARENT='/srv'
+SITE_SNAPSHOT='/var/lib/landingops-audit/site-roots.snapshot'
+
+emit_value() {
+    name=$1
+    value=$2
+    encoded=$(printf '%s' "$value" | /usr/bin/base64 | /usr/bin/tr -d '\r\n') || exit 70
+    printf 'LO1\t%s\t0\t%s\n' "$name" "$encoded"
+}
+
+emit_function() {
+    name=$1
+    shift
+    output=$("$@" 2>&1)
+    code=$?
+    encoded=$(printf '%s' "$output" | /usr/bin/base64 | /usr/bin/tr -d '\r\n') || exit 70
+    printf 'LO1\t%s\t%s\t%s\n' "$name" "$code" "$encoded"
+}
+
+identity_user() { /usr/bin/id -un; }
+identity_uid() { /usr/bin/id -u; }
+identity_gid() { /usr/bin/id -g; }
+identity_group() { /usr/bin/id -gn; }
+os_release() { /usr/bin/cat /etc/os-release; }
+architecture() { /usr/bin/uname -m; }
+php_version() {
+    for executable in /usr/bin/php /www/server/php/*/bin/php; do
+        [ -x "$executable" ] || continue
+        "$executable" -v | /usr/bin/head -n 1
+        return
+    done
+    return 127
+}
+php_extensions() {
+    for executable in /usr/bin/php /www/server/php/*/bin/php; do
+        [ -x "$executable" ] || continue
+        "$executable" -r 'foreach(get_loaded_extensions() as $e){echo strtolower($e),PHP_EOL;}'
+        return
+    done
+    return 127
+}
+php_fpm_versions() {
+    found=0
+    for executable in /usr/sbin/php-fpm* /www/server/php/*/sbin/php-fpm; do
+        [ -x "$executable" ] || continue
+        found=1
+        printf '%s|' "$executable"
+        "$executable" -v 2>&1 | /usr/bin/head -n 1
+    done
+    [ "$found" -eq 1 ]
+}
+php_runtime_matrix() {
+    found=0
+    for executable in /usr/bin/php /www/server/php/*/bin/php; do
+        [ -x "$executable" ] || continue
+        found=1
+        printf '%s|' "$executable"
+        "$executable" -r 'echo PHP_VERSION,"|",implode(",",array_map("strtolower",get_loaded_extensions())),PHP_EOL;'
+    done
+    [ "$found" -eq 1 ]
+}
+nginx_version() {
+    if [ -x /usr/sbin/nginx ]; then /usr/sbin/nginx -v 2>&1
+    elif [ -x /www/server/nginx/sbin/nginx ]; then /www/server/nginx/sbin/nginx -v 2>&1
+    else return 127
+    fi
+}
+nginx_vhost_capability() {
+    if [ -d /www/server/panel/vhost/nginx ]; then printf '%s\n' 'baota-vhost-directory-present'
+    elif [ -d /etc/nginx/sites-available ]; then printf '%s\n' 'nginx-sites-available-present'
+    else return 2
+    fi
+}
+disk() { /usr/bin/df -Pk -- "$INSTALL_PARENT" | /usr/bin/awk 'NR==2 {print $2 " " $4}'; }
+filesystem() {
+    if [ -x /usr/bin/findmnt ]; then /usr/bin/findmnt -T "$INSTALL_PARENT" -n -o FSTYPE,SOURCE,TARGET,OPTIONS
+    else /usr/bin/stat -f -c '%T' -- "$INSTALL_PARENT"
+    fi
+}
+target_state() {
+    if [ -L "$INSTALL_ROOT" ]; then printf '%s\n' symlink
+    elif [ ! -e "$INSTALL_ROOT" ]; then printf '%s\n' absent
+    elif [ -d "$INSTALL_ROOT" ]; then
+        if /usr/bin/find "$INSTALL_ROOT" -mindepth 1 -maxdepth 1 -print -quit | /usr/bin/grep -q .; then printf '%s\n' nonempty; else printf '%s\n' empty; fi
+    else printf '%s\n' other
+    fi
+}
+installation_marker() {
+    marker="$INSTALL_ROOT/.landingops-installation.json"
+    if [ -r "$marker" ] && [ ! -L "$marker" ]; then /usr/bin/head -c 4096 "$marker"; else printf '%s\n' absent; fi
+}
+parent_stat() { /usr/bin/stat -Lc '%F|%U|%G|%a|%d' -- "$INSTALL_PARENT"; }
+ancestor_symlinks() {
+    path=$INSTALL_ROOT
+    while [ "$path" != / ] && [ -n "$path" ]; do
+        [ -L "$path" ] && printf '%s\n' "$path"
+        path=$(/usr/bin/dirname -- "$path")
+    done
+}
+acl_summary() {
+    if [ -x /usr/bin/getfacl ]; then /usr/bin/getfacl -cp -- "$INSTALL_PARENT" 2>/dev/null | /usr/bin/head -n 50
+    else printf '%s\n' getfacl-unavailable
+    fi
+}
+snapshot_field() { /usr/bin/awk -F= -v key="$1" '$1==key {print substr($0,length(key)+2); exit}' "$SITE_SNAPSHOT"; }
+snapshot_ready() {
+    [ -f "$SITE_SNAPSHOT" ] && [ ! -L "$SITE_SNAPSHOT" ] || return 1
+    [ "$(/usr/bin/stat -Lc '%U|%G|%a' -- "$SITE_SNAPSHOT")" = 'root|landingops-audit|440' ] || return 1
+    [ "$(snapshot_field schema_version)" = 'landingops-site-roots/1' ] || return 1
+    generated=$(snapshot_field generated_epoch)
+    now=$(/usr/bin/date +%s)
+    case "$generated" in ''|*[!0-9]*) return 1;; esac
+    [ "$generated" -le "$now" ] && [ $((now - generated)) -le 300 ]
+}
+site_roots() { snapshot_ready || return 3; /usr/bin/awk 'found {print} $0=="--roots--" {found=1}' "$SITE_SNAPSHOT"; }
+site_config_count() { snapshot_ready || return 3; snapshot_field config_count; }
+site_root_declaration_count() { snapshot_ready || return 3; snapshot_field root_declaration_count; }
+site_non_absolute_root_count() { snapshot_ready || return 3; snapshot_field non_absolute_root_count; }
+site_unreadable_count() { snapshot_ready || return 3; snapshot_field unreadable_count; }
+site_symlink_count() { snapshot_ready || return 3; snapshot_field symlink_count; }
+database_client() {
+    if [ -x /usr/bin/mariadb ]; then /usr/bin/mariadb --version
+    elif [ -x /usr/bin/mysql ]; then /usr/bin/mysql --version
+    else return 127
+    fi
+}
+database_server_binary() {
+    if [ -x /usr/sbin/mariadbd ]; then /usr/sbin/mariadbd --version
+    elif [ -x /usr/sbin/mysqld ]; then /usr/sbin/mysqld --version
+    elif [ -x /www/server/mysql/bin/mysqld ]; then /www/server/mysql/bin/mysqld --version
+    else return 127
+    fi
+}
+database_runtime_binary() {
+    pid=$(/usr/bin/pgrep -xo mariadbd 2>/dev/null || /usr/bin/pgrep -xo mysqld 2>/dev/null || true)
+    [ -n "$pid" ] || return 3
+    executable=$(/usr/bin/readlink -f "/proc/$pid/exe") || return 4
+    case "$executable" in /usr/sbin/mariadbd|/usr/sbin/mysqld|/www/server/mysql/bin/mysqld) ;; *) return 5;; esac
+    [ -x "$executable" ] || return 5
+    "$executable" --version
+}
+baota_version() { [ -r /www/server/panel/data/version.pl ] && /usr/bin/head -n 1 /www/server/panel/data/version.pl; }
+
+emit_value protocol_version 'landingops-ssh-readonly/2'
+emit_value command_policy_id 'landingops-linux-readonly-v2'
+emit_value write_operations_performed 'false'
+for probe in identity_user identity_uid identity_gid identity_group os_release architecture php_version php_extensions php_fpm_versions php_runtime_matrix nginx_version nginx_vhost_capability disk filesystem target_state installation_marker parent_stat ancestor_symlinks acl_summary site_roots site_config_count site_root_declaration_count site_non_absolute_root_count site_unreadable_count site_symlink_count database_client database_server_binary database_runtime_binary baota_version; do
+    emit_function "$probe" "$probe"
+done

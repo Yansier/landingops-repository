@@ -6,7 +6,9 @@ namespace LandingOps\Deployment;
 
 final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
 {
-    public const POLICY_ID = 'landingops-linux-readonly-v1';
+    public const POLICY_ID = 'landingops-linux-readonly-v2';
+    public const PROTOCOL_VERSION = 'landingops-ssh-readonly/2';
+    public const REMOTE_COMMAND = 'landingops-readonly collect v2';
     private const MAX_OUTPUT_BYTES = 1048576;
 
     public function __construct(
@@ -47,6 +49,15 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
                 '-o', 'UpdateHostKeys=no',
                 '-o', 'VerifyHostKeyDNS=no',
                 '-o', 'ProxyCommand=none',
+                '-o', 'ProxyJump=none',
+                '-o', 'ClearAllForwardings=yes',
+                '-o', 'ForwardAgent=no',
+                '-o', 'RequestTTY=no',
+                '-o', 'PermitLocalCommand=no',
+                '-o', 'ControlMaster=no',
+                '-o', 'PasswordAuthentication=no',
+                '-o', 'KbdInteractiveAuthentication=no',
+                '-o', 'PreferredAuthentications=publickey',
                 '-o', 'ConnectTimeout=10',
                 '-o', 'ConnectionAttempts=1',
                 '-o', 'ServerAliveInterval=5',
@@ -55,9 +66,9 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
                 '-o', 'LogLevel=ERROR',
                 '-o', 'HostKeyAlgorithms=' . $matched['type'],
                 (string) $target['ssh_user'] . '@' . $host,
-                'sh', '-s', '--',
+                self::REMOTE_COMMAND,
             ];
-            $result = $this->run($command, $this->probeScript($config), $this->timeoutSeconds);
+            $result = $this->run($command, null, $this->timeoutSeconds);
             if ($result['timed_out']) {
                 throw new DeploymentException('ssh_readonly_timeout', 'SSH 只读诊断超时，远端错误内容未记录。');
             }
@@ -66,10 +77,12 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
                     'exit_code' => $result['exit_code'],
                 ]);
             }
+            $probes = $this->parseProtocol($result['stdout']);
+            $this->validateHandshake($probes);
             return [
                 'host_key_fingerprint' => $expectedFingerprint,
                 'session_id' => bin2hex(random_bytes(16)),
-                'probes' => $this->parseProtocol($result['stdout']),
+                'probes' => $probes,
             ];
         } finally {
             @unlink($knownHosts);
@@ -100,56 +113,6 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         return null;
     }
 
-    private function probeScript(DeploymentConfig $config): string
-    {
-        $install = $this->shellQuote($config->installRoot());
-        $parent = $this->shellQuote(dirname($config->installRoot()));
-        $phpExtensions = "if command -v php >/dev/null 2>&1; then php -r 'foreach(get_loaded_extensions() as \$e){echo strtolower(\$e),PHP_EOL;}'; else exit 127; fi";
-        $commands = [
-            'identity_user' => 'id -un', 'identity_uid' => 'id -u', 'identity_gid' => 'id -g', 'identity_group' => 'id -gn',
-            'os_release' => 'cat /etc/os-release', 'architecture' => 'uname -m',
-            'php_version' => 'if command -v php >/dev/null 2>&1; then php -v | head -n 1; else exit 127; fi',
-            'php_extensions' => $phpExtensions,
-            'php_fpm_versions' => 'found=0; for p in /usr/sbin/php-fpm* /www/server/php/*/sbin/php-fpm; do [ -x "$p" ] || continue; found=1; printf "%s|" "$p"; "$p" -v 2>&1 | head -n 1; done; [ "$found" -eq 1 ]',
-            'php_runtime_matrix' => "found=0; for p in /usr/bin/php /www/server/php/*/bin/php; do [ -x \"\$p\" ] || continue; found=1; printf \"%s|\" \"\$p\"; \"\$p\" -r 'echo PHP_VERSION,\"|\",implode(\",\",array_map(\"strtolower\",get_loaded_extensions())),PHP_EOL;'; done; [ \"\$found\" -eq 1 ]",
-            'nginx_version' => 'if command -v nginx >/dev/null 2>&1; then nginx -v 2>&1; elif [ -x /www/server/nginx/sbin/nginx ]; then /www/server/nginx/sbin/nginx -v 2>&1; else exit 127; fi',
-            'nginx_vhost_capability' => 'if [ -d /www/server/panel/vhost/nginx ]; then echo baota-vhost-directory-present; elif [ -d /etc/nginx/sites-available ]; then echo nginx-sites-available-present; else exit 2; fi',
-            'disk' => 'df -Pk -- ' . $parent . " 2>/dev/null | awk 'NR==2 {print \$2 \" \" \$4}'",
-            'filesystem' => 'if command -v findmnt >/dev/null 2>&1; then findmnt -T ' . $parent . ' -n -o FSTYPE,SOURCE,TARGET,OPTIONS; else stat -f -c "%T" -- ' . $parent . '; fi',
-            'target_state' => 'p=' . $install . '; if [ -L "$p" ]; then echo symlink; elif [ ! -e "$p" ]; then echo absent; elif [ -d "$p" ]; then if find "$p" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then echo nonempty; else echo empty; fi; else echo other; fi',
-            'installation_marker' => 'p=' . $install . '/.landingops-installation.json; if [ -r "$p" ] && [ ! -L "$p" ]; then head -c 4096 "$p"; else echo absent; fi',
-            'parent_stat' => 'stat -Lc "%F|%U|%G|%a|%d" -- ' . $parent,
-            'ancestor_symlinks' => 'p=' . $install . '; while [ "$p" != / ] && [ -n "$p" ]; do [ -L "$p" ] && printf "%s\\n" "$p"; p=$(dirname -- "$p"); done',
-            'acl_summary' => 'if command -v getfacl >/dev/null 2>&1; then getfacl -cp -- ' . $parent . " 2>/dev/null | sed -n '/^(user|group|mask|other):/p' | head -n 50; else echo getfacl-unavailable; fi",
-            'site_roots' => "find /www/server/panel/vhost/nginx -type f -name '*.conf' -readable -exec awk '\$1==\"root\" {gsub(/;/,\"\",\$2); if (\$2 ~ /^\\//) print \$2}' {} + 2>/dev/null | sort -u",
-            'site_config_count' => "find /www/server/panel/vhost/nginx -type f -name '*.conf' 2>/dev/null | wc -l | tr -d ' '",
-            'site_root_declaration_count' => "find /www/server/panel/vhost/nginx -type f -name '*.conf' -readable -exec awk '\$1==\"root\" {count++} END {print count+0}' {} + 2>/dev/null | awk '{sum+=\$1} END {print sum+0}'",
-            'site_non_absolute_root_count' => "find /www/server/panel/vhost/nginx -type f -name '*.conf' -readable -exec awk '\$1==\"root\" {gsub(/;/,\"\",\$2); if (\$2 !~ /^\\//) count++} END {print count+0}' {} + 2>/dev/null | awk '{sum+=\$1} END {print sum+0}'",
-            'site_unreadable_count' => "find /www/server/panel/vhost/nginx -type f -name '*.conf' ! -readable 2>/dev/null | wc -l | tr -d ' '",
-            'site_symlink_count' => "find /www/server/panel/vhost/nginx -type l -name '*.conf' 2>/dev/null | wc -l | tr -d ' '",
-            'database_client' => 'if command -v mariadb >/dev/null 2>&1; then mariadb --version; elif command -v mysql >/dev/null 2>&1; then mysql --version; else exit 127; fi',
-            'database_server_binary' => 'if command -v mariadbd >/dev/null 2>&1; then mariadbd --version; elif command -v mysqld >/dev/null 2>&1; then mysqld --version; elif [ -x /www/server/mysql/bin/mysqld ]; then /www/server/mysql/bin/mysqld --version; else exit 127; fi',
-            'database_runtime_binary' => 'pid=$(pgrep -xo mariadbd 2>/dev/null || pgrep -xo mysqld 2>/dev/null || true); [ -n "$pid" ] || exit 3; exe=$(readlink -f "/proc/$pid/exe") || exit 4; [ -x "$exe" ] || exit 5; "$exe" --version',
-            'baota_version' => 'if [ -r /www/server/panel/data/version.pl ]; then head -n 1 /www/server/panel/data/version.pl; else exit 2; fi',
-        ];
-        $lines = [
-            '#!/bin/sh', 'export LC_ALL=C', 'export LANG=C', 'umask 077',
-            'emit_probe() {',
-            '  probe="$1"',
-            '  command_text="$2"',
-            '  output=$(sh -c "$command_text" 2>&1)',
-            '  code=$?',
-            '  encoded=$(printf "%s" "$output" | base64 | tr -d "\\r\\n")',
-            '  printf "LO1\\t%s\\t%s\\t%s\\n" "$probe" "$code" "$encoded"',
-            '}',
-            'command -v base64 >/dev/null 2>&1 || exit 126',
-        ];
-        foreach ($commands as $name => $command) {
-            $lines[] = 'emit_probe ' . $this->shellQuote($name) . ' ' . $this->shellQuote($command);
-        }
-        return implode("\n", $lines) . "\n";
-    }
-
     /** @return array<string,array{exit_code:int,stdout:string,timed_out:bool}> */
     private function parseProtocol(string $stdout): array
     {
@@ -169,9 +132,23 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         return $probes;
     }
 
-    private function shellQuote(string $value): string
+    /** @param array<string,array{exit_code:int,stdout:string,timed_out:bool}> $probes */
+    private function validateHandshake(array $probes): void
     {
-        return "'" . str_replace("'", "'\\''", $value) . "'";
+        $required = [
+            'protocol_version' => self::PROTOCOL_VERSION,
+            'command_policy_id' => self::POLICY_ID,
+            'write_operations_performed' => 'false',
+        ];
+        foreach ($required as $probe => $expected) {
+            $result = $probes[$probe] ?? null;
+            if (!is_array($result) || $result['exit_code'] !== 0 || $result['timed_out']
+                || !hash_equals($expected, trim($result['stdout']))) {
+                throw new DeploymentException('ssh_probe_handshake_mismatch', '服务端只读探针协议或策略版本不匹配。', [
+                    'probe' => $probe,
+                ]);
+            }
+        }
     }
 
     /** @param list<string> $command @return array{exit_code:int,stdout:string,timed_out:bool} */
@@ -184,7 +161,9 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         if (!is_resource($process)) {
             throw new DeploymentException('ssh_process_unavailable', '无法启动系统 OpenSSH 工具。');
         }
-        fwrite($pipes[0], $stdin ?? '');
+        if ($stdin !== null && $stdin !== '') {
+            fwrite($pipes[0], $stdin);
+        }
         fclose($pipes[0]);
         stream_set_blocking($pipes[1], false);
         stream_set_blocking($pipes[2], false);

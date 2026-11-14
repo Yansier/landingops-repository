@@ -1,7 +1,7 @@
 {
   "evidence": {"source": "manual_json", "trust_level": "simulation_only"},
   "identity": {
-    "host": "192.0.2.10", "port": 22, "user": "landingops-deploy", "uid": 1201,
+    "host": "192.0.2.10", "port": 22, "user": "landingops-audit", "uid": 1201,
     "host_key_verified": true, "host_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
   },
   "baota": {"https_origin": "https://panel.example.invalid:8888", "version": "8.0.7", "write_api_used": false},
