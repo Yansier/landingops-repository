@@ -7,6 +7,7 @@ namespace LandingOps\ControlPlane\Service;
 use LandingOps\ControlPlane\Auth\AuthorizationService;
 use LandingOps\ControlPlane\Auth\Principal;
 use LandingOps\ControlPlane\Cloudflare\CloudflareReadOnlyClient;
+use LandingOps\ControlPlane\Cloudflare\WildcardDnsPolicyEvaluator;
 use LandingOps\ControlPlane\Domain\DomainName;
 use LandingOps\ControlPlane\Exception\ApiException;
 use LandingOps\ControlPlane\Repository\ControlPlaneRepository;
@@ -21,6 +22,7 @@ final class CloudflareDnsPrecheckService
         private readonly CloudflareReadOnlyClient $client = new CloudflareReadOnlyClient(),
         private readonly AuthorizationService $authorization = new AuthorizationService(),
         private readonly ?string $confirmedPublicIpv4 = null,
+        private readonly WildcardDnsPolicyEvaluator $evaluator = new WildcardDnsPolicyEvaluator(),
     ) {
         if ($confirmedPublicIpv4 !== null && filter_var($confirmedPublicIpv4, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
             throw new \InvalidArgumentException('管理员确认的公网 IPv4 配置无效。');
@@ -37,6 +39,12 @@ final class CloudflareDnsPrecheckService
     public function check(Principal $actor, string $primaryDomainId, string $candidateHostname): array
     {
         $this->authorization->assertSuperAdmin($actor);
+        return $this->checkForDeployment($primaryDomainId, $candidateHostname);
+    }
+
+    /** @return array<string,mixed> */
+    public function checkForDeployment(string $primaryDomainId, string $candidateHostname): array
+    {
         $domain = $this->repository->findPrimaryDomain($primaryDomainId);
         if ($domain === null) {
             throw new ApiException(404, 'primary_domain_not_found', '主域名不存在。');
@@ -71,66 +79,54 @@ final class CloudflareDnsPrecheckService
         if ($zone === null) {
             throw new ApiException(409, 'dns_precheck_resource_not_ready', '关联 Zone 不存在。');
         }
-        $records = $this->client->dnsRecords($token, (string) $zone['external_zone_id'], $hostname);
-        return $this->classify($hostname, $records);
+        $zoneName = strtolower((string) $zone['normalized_zone_name']);
+        $zoneExternalId = (string) $zone['external_zone_id'];
+        $wildcardName = WildcardDnsPolicyEvaluator::applicableWildcard($hostname, $zoneName);
+        $exact = $this->client->dnsRecords($token, $zoneExternalId, $hostname);
+        $wildcard = $wildcardName === null ? [] : $this->client->dnsRecords($token, $zoneExternalId, $wildcardName);
+        $delegations = [];
+        foreach ($this->delegationNames($hostname, $zoneName) as $name) {
+            foreach ($this->client->dnsRecords($token, $zoneExternalId, $name) as $record) {
+                if ($record['type'] === 'NS') {
+                    $delegations[] = $record;
+                }
+            }
+        }
+        $observedAt = gmdate('c');
+        $result = $this->evaluator->evaluate(
+            $hostname,
+            $zoneName,
+            $this->confirmedPublicIpv4,
+            $exact,
+            $wildcard,
+            $delegations,
+            true,
+            $observedAt,
+        );
+        $result['resource_identity'] = [
+            'connection_id' => $connection['id'],
+            'zone_id' => $zone['id'],
+            'zone_external_id' => $zoneExternalId,
+            'credential_context_version' => $domain['connection_credential_context_version'],
+            'zone_verified_credential_context_version' => $domain['zone_verified_credential_context_version'],
+        ];
+        $result['limitations'] = [
+            '只读证据不构成网站所有权或部署许可。',
+            'CNAME 最终目标、DNSSEC 与父 Zone 外部委派仍需在正式执行前重新检查。',
+        ];
+        return $result;
     }
 
-    /** @param list<array{id:string,type:string,name:string,content:string,proxied:?bool,ttl:?int}> $records @return array<string,mixed> */
-    private function classify(string $hostname, array $records): array
+    /** @return list<string> */
+    private function delegationNames(string $hostname, string $zoneName): array
     {
-        $limitations = [
-            '只查询精确同名记录；没有检查通配符记录。',
-            '没有检查父级或子级 NS 委派、CNAME 链最终目标及其他权威 DNS 风险。',
-            '正式 DNS 写入前必须重新检查通配符、委派和当时的完整记录集。',
-        ];
-        if ($records === []) {
-            return [
-                'hostname' => $hostname, 'classification' => 'clear', 'records' => [],
-                'confirmed_public_ipv4' => $this->confirmedPublicIpv4,
-                'issues' => [], 'limitations' => $limitations,
-                'message' => '未发现精确同名 DNS 记录；未全面排除通配符、委派或其他 DNS 风险，本检查未创建任何记录。',
-            ];
+        $labels = explode('.', strtolower(rtrim($hostname, '.')));
+        $zoneLabels = explode('.', strtolower(rtrim($zoneName, '.')));
+        $names = [];
+        while (count($labels) > count($zoneLabels) + 1) {
+            array_shift($labels);
+            $names[] = implode('.', $labels);
         }
-        $issues = [];
-        $uncertain = false;
-        if ($this->confirmedPublicIpv4 === null) {
-            $issues[] = ['code' => 'confirmed_ipv4_missing', 'record_id' => null, 'message' => '尚未配置管理员确认的服务器公网 IPv4。'];
-            $uncertain = true;
-        }
-        foreach ($records as $record) {
-            if ($record['type'] !== 'A') {
-                $issues[] = ['code' => 'record_type_mismatch', 'record_id' => $record['id'], 'message' => '存在非 A 类型的精确同名记录。'];
-            } elseif ($this->confirmedPublicIpv4 !== null && !hash_equals($this->confirmedPublicIpv4, $record['content'])) {
-                $issues[] = ['code' => 'record_content_mismatch', 'record_id' => $record['id'], 'message' => 'A 记录地址与管理员确认的公网 IPv4 不一致。'];
-            }
-            if ($record['proxied'] === null) {
-                $issues[] = ['code' => 'proxied_metadata_missing', 'record_id' => $record['id'], 'message' => '响应缺少 proxied 元数据，无法安全确认。'];
-                $uncertain = true;
-            } elseif ($record['proxied'] !== false) {
-                $issues[] = ['code' => 'proxied_mismatch', 'record_id' => $record['id'], 'message' => '记录已开启 Cloudflare 代理，不符合 proxied=false。'];
-            }
-            if ($record['ttl'] === null) {
-                $issues[] = ['code' => 'ttl_metadata_missing', 'record_id' => $record['id'], 'message' => '响应缺少 TTL 元数据，无法安全确认。'];
-                $uncertain = true;
-            } elseif ($record['ttl'] !== 1) {
-                $issues[] = ['code' => 'ttl_mismatch', 'record_id' => $record['id'], 'message' => '记录 TTL 不是 Cloudflare Auto（1）。'];
-            }
-        }
-        $hasConflict = count(array_filter($issues, static fn (array $issue): bool => !in_array(
-            $issue['code'],
-            ['confirmed_ipv4_missing', 'proxied_metadata_missing', 'ttl_metadata_missing'],
-            true,
-        ))) > 0;
-        $classification = $hasConflict ? 'conflict' : ($uncertain ? 'needs_configuration' : 'compatible');
-        return [
-            'hostname' => $hostname, 'classification' => $classification, 'records' => $records,
-            'confirmed_public_ipv4' => $this->confirmedPublicIpv4,
-            'issues' => $issues, 'limitations' => $limitations,
-            'message' => match ($classification) {
-                'compatible' => '现有精确同名记录完整符合 A、确认 IPv4、proxied=false、ttl=1；未作修改。',
-                'needs_configuration' => '现有记录缺少管理员配置或必要元数据，无法安全确认兼容性。',
-                default => '现有记录不完整符合 V1 默认目标策略，需要管理员人工确认。',
-            },
-        ];
+        return $names;
     }
 }

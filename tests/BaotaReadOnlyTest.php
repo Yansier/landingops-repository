@@ -420,11 +420,36 @@ return [
         $discovery = $service->sites($p[SUPER_ID]);
         TestHarness::assertSame(20, $gateway->domainCalls);
         TestHarness::assertFalse($discovery['inventory']['complete']);
-        TestHarness::assertSame('detail_budget_exhausted', $discovery['inventory']['reason']);
-        TestHarness::assertSame('budget_exhausted', $discovery['sites'][44]['domain_capability']);
+        TestHarness::assertSame('detail_batches_remaining', $discovery['inventory']['reason']);
+        TestHarness::assertSame('not_in_batch', $discovery['sites'][44]['domain_capability']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT=/www/wwwroot/landingops');
         TestHarness::assertSame('unsupported', $service->precheck($p[SUPER_ID], 'unused.example.test')['classification']);
         putenv('LANDINGOPS_BAOTA_SITE_ROOT');
+    },
+
+    'baota detail batches complete all 26 sites without exceeding per request budget' => static function (): void {
+        [$repository, $p, $configs] = baotaFixture();
+        $configs->save($p[SUPER_ID], ['base_url' => 'https://panel.example.test:8888', 'api_key' => 'synthetic-secret'], 'req-create');
+        $gateway = new FakeBaotaGateway();
+        for ($i = 1; $i <= 26; $i++) {
+            $gateway->siteRows[] = [
+                'external_id' => $i, 'name' => "site{$i}.example.test", 'path' => "/www/wwwroot/site{$i}",
+                'status' => '1', 'metadata_complete' => true,
+            ];
+            $gateway->domains[$i] = ['status' => 'supported', 'domains' => ["site{$i}.example.test"]];
+        }
+        $service = new BaotaReadOnlyService($repository, $configs, $gateway);
+        $service->verify($p[SUPER_ID], 1, 'req-verify');
+        $first = $service->sites($p[SUPER_ID]);
+        TestHarness::assertSame(20, $first['batch']['next_offset']);
+        TestHarness::assertSame(20, $first['batch']['processed']);
+        $second = $service->siteDetailBatch($p[SUPER_ID], 20, 20);
+        TestHarness::assertSame(6, $second['batch']['processed']);
+        TestHarness::assertSame(null, $second['batch']['next_offset']);
+        TestHarness::assertTrue($second['batch']['complete']);
+        TestHarness::assertSame('supported', $second['sites'][25]['domain_capability']);
+        TestHarness::assertSame(26, $gateway->domainCalls);
+        TestHarness::assertFalse($second['batch']['write_operations_performed']);
     },
 
     'baota domain detail failure cannot produce a clear precheck' => static function (): void {
@@ -496,6 +521,17 @@ return [
             [ControlPlaneKernel::COOKIE => $cookie], ['expected_version' => 1],
         ));
         TestHarness::assertSame(200, $verified->status);
+        $batchWithoutCsrf = $kernel->handle(new Request(
+            'POST', '/api/v1/settings/baota/site-detail-batches', [],
+            [ControlPlaneKernel::COOKIE => $cookie], ['offset' => 0, 'limit' => 20],
+        ));
+        TestHarness::assertSame(403, $batchWithoutCsrf->status);
+        $batch = $kernel->handle(new Request(
+            'POST', '/api/v1/settings/baota/site-detail-batches', ['X-CSRF-Token' => $csrf],
+            [ControlPlaneKernel::COOKIE => $cookie], ['offset' => 0, 'limit' => 20],
+        ));
+        TestHarness::assertSame(200, $batch->status);
+        TestHarness::assertFalse($batch->body['data']['batch']['write_operations_performed']);
 
         $staffLogin = $kernel->handle(new Request('POST', '/api/v1/login', [], [], [
             'email' => 'staff-a@example.test', 'password' => 'Correct horse battery staple 123!',

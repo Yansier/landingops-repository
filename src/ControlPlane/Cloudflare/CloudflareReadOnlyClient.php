@@ -63,6 +63,35 @@ final class CloudflareReadOnlyClient
         ];
     }
 
+    /** @return list<array{id:string,name:string,status:string,account_id:?string}> */
+    public function zones(string $token): array
+    {
+        $payload = $this->request('/zones?per_page=50&page=1', $token);
+        $info = $payload['result_info'] ?? null;
+        if (is_array($info) && (int) ($info['total_pages'] ?? 1) > 1) {
+            throw new ApiException(502, 'cloudflare_zone_discovery_incomplete', 'Zone 自动发现超过 50 项安全上限，请继续使用手动登记。');
+        }
+        $result = $payload['result'] ?? null;
+        if (!is_array($result) || !array_is_list($result)) {
+            throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare Zone 列表响应格式无效。');
+        }
+        $zones = [];
+        foreach ($result as $row) {
+            if (!is_array($row) || !is_string($row['id'] ?? null) || !is_string($row['name'] ?? null)
+                || !is_string($row['status'] ?? null)) {
+                throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare Zone 列表字段无效。');
+            }
+            $zones[] = [
+                'id' => $row['id'],
+                'name' => strtolower(rtrim($row['name'], '.')),
+                'status' => $row['status'],
+                'account_id' => is_array($row['account'] ?? null) && is_string($row['account']['id'] ?? null)
+                    ? $row['account']['id'] : null,
+            ];
+        }
+        return $zones;
+    }
+
     /** @return list<array{id:string,type:string,name:string,content:string,proxied:?bool,ttl:?int}> */
     public function dnsRecords(string $token, string $zoneId, string $hostname): array
     {

@@ -1,0 +1,12 @@
+{
+  "status": "ready_for_test_deployment",
+  "dns_strategy": "reuse_existing_wildcard",
+  "classification": "wildcard_covered",
+  "applicable_wildcard": "*.pages.example.test",
+  "dns_write_required": false,
+  "dns_records_to_create": 0,
+  "dns_records_to_update": 0,
+  "dns_records_to_delete": 0,
+  "execute": false,
+  "write_operations_performed": false
+}

@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1J.1（真实只读兼容性收尾）**。已在明确授权的宝塔 8.0.7 上验证系统摘要、站点分页/根目录、绑定域名和 PHP 版本；也已使用受限测试 Token 验证 Cloudflare Token、Zone/Account 身份及 DNS 精确名称读取。Dry Run 不会创建实例、预留、任务、DNS、宝塔站点、SSL 或生产文件。
+> 当前状态：**Phase 1K（通配符复用与首次建站前置验收）**。V1 默认复用已验证且指向管理员确认服务器的通配符，不为实例自动创建精确 A 记录。Zone 自动筛选、宝塔详情分批和 Dry Run 都是只读/零写入；尚未创建站点、DNS、SSL 或生产文件。
 
 ## 最重要的边界
 
@@ -34,6 +34,8 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1H 宝塔只读预检查](docs/PHASE_1H.md) | 单宝塔密文配置、官方只读白名单、外部站点保护和隔离能力检查 |
 | [Phase 1I 单站部署预演](docs/PHASE_1I.md) | 四步向导、Schema 表单、服务端 Dry Run、读预算与零写入部署计划 |
 | [Phase 1J 配置与只读验收](docs/PHASE_1J.md) | 严格表单转换、显式不支持错误、脱敏只读诊断和真实 PDO 往返 |
+| [Phase 1K 通配符与 Preflight](docs/PHASE_1K.md) | Zone 筛选、实际适用通配符、宝塔详情分批、零 DNS 写入计划 |
+| [V1 DNS 策略](docs/DNS_STRATEGY.md) | 通配符复用条件、分类语义与 fail-closed 边界 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -61,7 +63,7 @@ examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)，Phase 1J 收尾见 [Phase 1J 说明](docs/PHASE_1J.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)，Phase 1J 收尾见 [Phase 1J 说明](docs/PHASE_1J.md)，通配符 Preflight 见 [Phase 1K 说明](docs/PHASE_1K.md)。
 
 ## 安全提示
 

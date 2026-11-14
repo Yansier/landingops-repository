@@ -162,12 +162,26 @@ export interface PrimaryDomain {
 
 export interface DnsPrecheckResult {
   hostname: string
-  classification: 'clear' | 'compatible' | 'needs_configuration' | 'conflict'
-  records: Array<{ id: string; type: string; name: string; content: string; proxied: boolean | null; ttl: number | null }>
+  classification: 'wildcard_covered'|'matched_server'|'other_server'|'conflict'|'needs_attention'|'unsupported'
+  dns_strategy: 'reuse_existing_wildcard'|'manual_dns_prerequisite'
+  dns_write_required: false
+  dns_records_to_create: 0
+  dns_records_to_update: 0
+  dns_records_to_delete: 0
+  applicable_wildcard: string | null
+  records: { exact: DnsRecord[]; wildcard: DnsRecord[]; delegations: DnsRecord[] }
   confirmed_public_ipv4: string | null
   issues: Array<{ code: string; record_id: string | null; message: string }>
   limitations: string[]
   message: string
+}
+export interface DnsRecord { id: string; type: string; name: string; content: string; proxied: boolean | null; ttl: number | null }
+export interface CloudflareZoneDiscovery {
+  classification: 'complete'|'incomplete'|'manual_registration_required'
+  zones: Array<{ id:string; name:string; status:string; account_id:string|null; classification:'matched_server'|'other_server'|'needs_attention'|'unsupported'; wildcard_record_count:number|null; already_registered:boolean; team_grants_created:0 }>
+  manual_registration_available: true
+  write_operations_performed: false
+  observed_at?: string
 }
 
 export interface BaotaConfig {
@@ -211,7 +225,8 @@ export interface BaotaInventory {
   detail_queries_used: number
   detail_failures: number
 }
-export interface BaotaSiteDiscovery { sites: BaotaSite[]; inventory: BaotaInventory }
+export interface BaotaSiteDiscovery { sites: BaotaSite[]; inventory: BaotaInventory; batch?: { offset:number; limit:number; processed:number; complete:boolean; next_offset:number|null; total_sites:number; observed_at:string; write_operations_performed:false } }
+export interface BaotaSiteDetailBatch extends BaotaSiteDiscovery { batch: { offset:number; limit:number; processed:number; complete:boolean; next_offset:number|null; total_sites:number; observed_at:string; write_operations_performed:false } }
 
 export interface BaotaPrecheck {
   hostname: string
@@ -259,7 +274,7 @@ export interface ConfigFormField {
 export interface ConfigFormContract { template_version_id: string; schema_hash: string; fields: ConfigFormField[] }
 export interface DryRunIssue { code: string; message: string }
 export interface DeploymentDryRun {
-  status: 'blocked'|'needs_attention'|'ready'
+  status: 'blocked'|'needs_attention'|'unsupported'|'ready_for_test_deployment'
   dry_run: true
   mutations_performed: false
   template: { id: string; slug: string; name: string; version_id: string; version: string; zip_sha256: string }
@@ -269,6 +284,7 @@ export interface DeploymentDryRun {
   plan: { target_path: string | null; steps: Array<{ order: number; kind: string; action: string; execute: false }>; dns: Record<string, unknown>; baota: Record<string, unknown>; files: Record<string, unknown>; ssl: Record<string, unknown> }
   blockers: DryRunIssue[]
   risks: DryRunIssue[]
+  unsupported: DryRunIssue[]
   disclaimer: string
 }
 

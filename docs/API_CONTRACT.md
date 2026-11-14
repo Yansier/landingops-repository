@@ -254,7 +254,7 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 
 服务端忽略且不信任客户端团队、模板所有者、授权或状态推断。处理时重新读取用户状态、模板与团队授权、主域名授权、连接与 Zone 当前凭据上下文、实例、活动预留、模板 manifest 和 Schema。配置错误以预演 `blockers` 返回；资源不存在或授权失效使用 404，资源存在但上游验证状态不可用使用 409，输入形状错误使用 400/422。
 
-成功响应包含 `status=blocked|needs_attention|ready`、固定模板版本、规范化 FQDN、不含值的配置校验摘要、宝塔/DNS 只读检查摘要，以及 DNS、宝塔、构建、SSL、原子发布的结构化计划。所有步骤均为 `execute=false`，并固定返回 `dry_run=true`、`mutations_performed=false`。Dry Run 不写入 `instances`、`domain_reservations`、`deployment_jobs` 或 `job_steps`，也不构成未来正式提交许可。
+成功响应包含 `status=blocked|needs_attention|unsupported|ready_for_test_deployment`、固定模板版本、规范化 FQDN、不含值的配置校验摘要、宝塔/DNS 只读检查摘要，以及 DNS、宝塔、构建、SSL、原子发布的结构化计划。所有步骤均为 `execute=false`，并固定返回 `dry_run=true`、`mutations_performed=false`。Dry Run 不写入 `instances`、`domain_reservations`、`deployment_jobs` 或 `job_steps`，也不构成未来正式提交许可。
 
 ## 宝塔清单完整性
 
@@ -267,3 +267,12 @@ V1 主域名策略默认值为 `A → 已确认公网 IPv4`、`proxied=false`、
 宝塔固定只读目标采用 `/<module>?action=<allowlisted-action>`，并在表单中保留相同 action；只允许 `GetSystemTotal`、`getData(table=sites)`、`GetSiteDomains`、`GetPHPVersion`、`GetSitePHPVersion`。`table=sites` 禁止发送与该查询不兼容的 `list=true`。同一精确 origin 的响应 Cookie 只在适配器内存中复用，不能持久化或跨 origin。HTML/重定向、标量策略拒绝和面板内部异常均返回失败，不得把原始页面、Python 堆栈或响应正文放入 API/诊断报告。
 
 Cloudflare Zone 详情响应的 `id` 必须与请求的 Zone ID 完全一致。诊断报告用 `zone.authoritative_nameserver_count` 表示 Zone 元数据中 Cloudflare 分配的权威名称服务器数量，用 `dns_read.explicit_apex_ns_record_count` 表示 DNS Records 精确 apex 查询返回的显式 NS 记录数量；不得把后者为 0 解释为 Zone 没有权威名称服务器，也不得输出具体 NS 或 DNS content。
+
+# Phase 1K 通配符与 Preflight 契约
+
+- `POST /api/v1/cloudflare-connections/{id}/zone-discoveries`：仅总管理员、CSRF、`expected_connection_version`。只读列出 Token 范围内 Zone 并筛选最多 20 个根通配符；不登记、不授权。无 Zone List 权限返回 `manual_registration_required`，保留手动模式。
+- `POST /api/v1/primary-domains/{id}/dns-prechecks`：仅总管理员、CSRF。读取精确候选、实际适用通配符和 Zone 内祖先 NS 委派。成功复用返回 `classification=wildcard_covered`、`dns_strategy=reuse_existing_wildcard`，且 create/update/delete 均为 0。
+- `POST /api/v1/settings/baota/site-detail-batches`：仅总管理员、CSRF，接收 `offset>=0` 与 `1<=limit<=20`。返回全部列表、当前批详情状态、`next_offset`、观察时间和零写入声明；失败批不推进 offset。
+- `POST /api/v1/deployment-dry-runs`：状态改为 `ready_for_test_deployment|blocked|needs_attention|unsupported`。响应增加 Zone/连接身份、DNS 策略、证据和 `unsupported` 列表。任何状态都不是执行授权。
+
+上述端点均不提供 DNS 或宝塔写动作。精确记录、通配符或委派不满足时不会退化为自动创建 A 记录。

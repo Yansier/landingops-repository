@@ -202,3 +202,10 @@ instances/<instance-key>/
 Schema 表单生成器采用“能完整解释才渲染”的策略：每个 `properties` 子节点必须生成字段或明确抛出 `config_form_schema_unsupported`。浏览器保留 `undefined`（省略）与 `null`（显式空值）的差异，只做可重复的标量转换；PHP 仍从不可变模板版本装载 Schema 进行最终验证。响应不包含提交值，公开投影继续由独立白名单投影器完成。
 
 真实兼容性诊断与业务请求分离：运维 CLI 从进程环境读取一次性秘密，调用固定只读适配器并输出脱敏摘要。宝塔诊断沿用 3 页/200 站点及 20 详情预算；Cloudflare 诊断只执行 Token、单一明确 Zone 与相关精确 DNS 查询。任一“不完整”都只能产生 `needs_attention`/失败，诊断成功也不是写入许可。
+## Phase 1K 只读 Preflight 汇聚
+
+控制面把三类互不等价的证据汇聚到既有 Dry Run：数据库授权/唯一性、Cloudflare DNS 解析证据、宝塔站点/目录证据。DNS 指向服务器不产生站点所有权；宝塔未发现绑定也不证明目录安全；数据库授权不替代外部状态。任一证据不完整、过期或身份不一致均 fail closed。
+
+Zone 自动发现是瞬时只读推荐，不写资源表且不创建团队授权。DNS 评估器是无网络副作用的纯组件，适配器只负责从固定 Cloudflare origin 读取白名单路径。宝塔详情通过显式批次继续，不把单请求预算提高到可造成长时间同步阻塞的数量。
+
+LandingOps 仍不参与已部署网站运行时请求。未来静态站点从自身不可变 release 提供 HTML 和公开配置；控制面、数据库、Cloudflare API 或宝塔 API 均不在访客请求链路。

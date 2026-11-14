@@ -179,3 +179,12 @@ Phase 1A/1A.1 的直接验收对象是文档与契约的一致性。下列 V1 �
 - 待联调接口均被目标环境实测替换为版本化适配器结论。
 - 安全审查确认无真实凭据、无跨团队越权、无 ZIP 路径逃逸、无运行时 LandingOps 依赖。
 
+## Phase 1K 通配符与首次建站前置验收
+
+- 深层候选只检查实际适用通配符；`*.example.com` 不得直接证明 `offer.pages.example.com` 覆盖。
+- 精确 A/AAAA/CNAME、Zone 内祖先 NS 委派、其他服务器 IP、代理开启、TTL/元数据缺失、过期或不完整结果均不得返回 `wildcard_covered`。
+- 成功复用计划必须返回 `dns_strategy=reuse_existing_wildcard`、create/update/delete 均为 0、`dns_write_required=false`、`execute=false`。
+- Zone 自动发现按连接隔离，不跨 Token 权限；发现不写 Zone/主域名/授权。缺少 Zone List 权限仍可手动登记。
+- 26 个宝塔站点详情可在单批最多 20 项的限制下分批完成；任何失败或未查询站点阻止 clear，既有站点全部保持 external。
+- Dry Run 不写实例、预留、任务、DNS、宝塔、文件或 SSL。`ready_for_test_deployment` 也不构成正式执行许可。
+- 目录/ACL/Nginx/FPM/同文件系统/磁盘/SSL 未获得真实证据时保持 unsupported；PHP、原生后台和第三方 PHP 禁用。

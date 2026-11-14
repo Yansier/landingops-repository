@@ -21,6 +21,7 @@ final class DeploymentDryRunService
         private readonly AuthorizationService $authorization = new AuthorizationService(),
         private readonly ConfigValidator $validator = new ConfigValidator(),
         private readonly ConfigFormSchemaBuilder $forms = new ConfigFormSchemaBuilder(),
+        private readonly ?CloudflareDnsPrecheckService $dns = null,
     ) {
     }
 
@@ -84,11 +85,24 @@ final class DeploymentDryRunService
         } elseif (($baota['classification'] ?? null) !== 'clear') {
             $risks[] = self::item('baota_evidence_incomplete', '宝塔或文件系统证据不足，正式提交前必须重新检查。');
         }
-        $risks[] = self::item('dns_write_precheck_required', '正式提交前必须重新执行 DNS 精确记录、通配符及委派检查。');
+        try {
+            $dns = $this->dns?->checkForDeployment($domainId, $fqdn) ?? self::dnsUnavailable('dns_live_check_unavailable');
+        } catch (ApiException $exception) {
+            $dns = self::dnsUnavailable($exception->errorCode);
+        }
+        if (($dns['classification'] ?? null) === 'conflict' || ($dns['classification'] ?? null) === 'other_server') {
+            $blockers[] = self::item('dns_wildcard_conflict', 'DNS 精确记录、委派或通配符目标与当前服务器不兼容。');
+        } elseif (($dns['classification'] ?? null) !== 'wildcard_covered') {
+            $risks[] = self::item('dns_wildcard_not_proven', '尚未获得可复用通配符的完整、最新证据；不会自动创建精确 A 记录。');
+        }
         $risks[] = self::item('dry_run_not_reservation', '预演不预留域名、实例、任务或任何外部资源。');
 
         $targetPath = $baota['candidate_path'] ?? BaotaPath::candidateRoot($fqdn);
-        $status = $blockers !== [] ? 'blocked' : ($risks !== [] ? 'needs_attention' : 'ready');
+        $unsupported = ($dns['classification'] ?? null) === 'unsupported'
+            || ($baota['classification'] ?? null) === 'unsupported';
+        $ready = $blockers === [] && ($dns['classification'] ?? null) === 'wildcard_covered'
+            && ($baota['classification'] ?? null) === 'clear';
+        $status = $blockers !== [] ? 'blocked' : ($ready ? 'ready_for_test_deployment' : ($unsupported ? 'unsupported' : 'needs_attention'));
         return [
             'status' => $status,
             'dry_run' => true,
@@ -97,31 +111,46 @@ final class DeploymentDryRunService
                 'id' => $version['template_id'], 'slug' => $version['slug'], 'name' => $version['template_name'],
                 'version_id' => $version['id'], 'version' => $version['version'], 'zip_sha256' => $version['zip_sha256'],
             ],
-            'domain' => ['primary_domain_id' => $domainId, 'fqdn' => $fqdn, 'authorization' => 'valid'],
+            'domain' => [
+                'primary_domain_id' => $domainId, 'fqdn' => $fqdn, 'authorization' => 'valid',
+                'zone_id' => $domain['zone_id'], 'zone_name' => $domain['normalized_zone_name'],
+                'connection_id' => $domain['connection_id'], 'connection_label' => $domain['connection_label'] ?? null,
+            ],
             'configuration' => [
                 'valid' => $validation['valid'], 'errors' => $validation['errors'], 'warnings' => $validation['warnings'],
                 'schema_hash' => $this->forms->build($schema)['schema_hash'],
                 'submitted_field_count' => count($configInput),
                 'values_returned' => false,
             ],
-            'external_checks' => ['baota' => $baota, 'dns' => ['status' => 'needs_attention', 'mutations_performed' => false]],
+            'external_checks' => ['baota' => $baota, 'dns' => $dns],
             'plan' => [
                 'target_path' => $targetPath,
                 'steps' => [
                     ['order' => 1, 'kind' => 'revalidate', 'action' => '重新校验权限、Schema、实例、预留和外部状态', 'execute' => false],
                     ['order' => 2, 'kind' => 'baota', 'action' => '创建隔离站点并确认根目录', 'execute' => false],
                     ['order' => 3, 'kind' => 'build', 'action' => '离线构建不可变 release 与公开配置投影', 'execute' => false],
-                    ['order' => 4, 'kind' => 'dns', 'action' => '按已确认 IPv4 创建 DNS A 记录', 'execute' => false],
+                    ['order' => 4, 'kind' => 'dns', 'action' => '复用已验证通配符；不创建、修改或删除 DNS 记录', 'execute' => false],
                     ['order' => 5, 'kind' => 'ssl', 'action' => 'DNS 生效后申请并验证 HTTPS', 'execute' => false],
                     ['order' => 6, 'kind' => 'publish', 'action' => '原子切换 release 并保留回滚版本', 'execute' => false],
                 ],
-                'dns' => ['type' => 'A', 'name' => $fqdn, 'content' => 'ENV:LANDINGOPS_CONFIRMED_PUBLIC_IPV4', 'proxied' => false, 'ttl' => 1, 'execute' => false],
+                'dns' => [
+                    'dns_strategy' => $dns['dns_strategy'] ?? 'manual_dns_prerequisite',
+                    'dns_write_required' => false,
+                    'dns_records_to_create' => 0,
+                    'dns_records_to_update' => 0,
+                    'dns_records_to_delete' => 0,
+                    'execute' => false,
+                ],
                 'baota' => ['hostname' => $fqdn, 'document_root' => $targetPath, 'execute' => false],
                 'files' => ['strategy' => 'immutable_release_and_atomic_pointer', 'execute' => false],
                 'ssl' => ['requires_dns_ready' => true, 'requires_fresh_precheck' => true, 'execute' => false],
             ],
             'blockers' => $blockers,
             'risks' => $risks,
+            'unsupported' => array_values(array_filter([
+                ($dns['classification'] ?? null) === 'unsupported' ? self::item('dns_evidence_unsupported', 'DNS 证据不完整或已过期。') : null,
+                ($baota['classification'] ?? null) === 'unsupported' ? self::item('baota_evidence_unsupported', '宝塔站点或目录证据不完整。') : null,
+            ])),
             'disclaimer' => 'Dry Run 不是创建许可；正式提交必须在同一受控流程中再次验证全部条件。',
         ];
     }
@@ -188,5 +217,20 @@ final class DeploymentDryRunService
     private static function item(string $code, string $message): array
     {
         return ['code' => $code, 'message' => $message];
+    }
+
+    /** @return array<string,mixed> */
+    private static function dnsUnavailable(string $code): array
+    {
+        return [
+            'classification' => 'unsupported',
+            'dns_strategy' => 'manual_dns_prerequisite',
+            'dns_write_required' => false,
+            'dns_records_to_create' => 0,
+            'dns_records_to_update' => 0,
+            'dns_records_to_delete' => 0,
+            'issues' => [self::item($code, 'Cloudflare 只读证据未能完整取得；不会执行 DNS 写入。')],
+            'write_operations_performed' => false,
+        ];
     }
 }

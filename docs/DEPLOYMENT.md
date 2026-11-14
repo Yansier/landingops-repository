@@ -223,10 +223,16 @@ Phase 1E 默认把模板库存放在项目 `var/private/templates`，生产应�
 
 # Phase 1I：Dry Run 与未来正式提交边界
 
-部署预演按顺序生成以下只读计划：重新验证服务端权限与资源状态、宝塔站点/路径操作、离线不可变 release 构建、DNS A 记录、SSL/HTTPS 前置条件、原子切换和回滚保留。V1 默认 DNS 目标仍为管理员确认 IPv4、`A`、`proxied=false`、`ttl=1`，但本阶段只在计划中引用运行环境配置，不读取或写入真实 DNS。
+部署预演按顺序生成以下只读计划：重新验证服务端权限与资源状态、宝塔站点/路径操作、离线不可变 release 构建、既有通配符复用、SSL/HTTPS 前置条件、原子切换和回滚保留。V1 默认 DNS 目标为管理员确认 IPv4、`A`、`proxied=false`、`ttl=1`；不为每个子域自动创建精确 A 记录，也不修改已有通配符。
 
 Dry Run 不预留 FQDN，不分配 instance/job/revision，不创建目录或 release，不申请证书。报告中的 `clear` 也只表示当前有限证据未发现已知冲突。正式提交必须重新检查模板/域名授权、Cloudflare 凭据上下文、DNS 精确记录与通配符/委派、宝塔完整清单、文件系统目录及隔离能力，并通过事务、幂等键和补偿日志完成资源分配。
 
 # Phase 1J：只读兼容性诊断
 
 真实诊断只用于确认未来部署的前置兼容性。宝塔诊断不读取网站文件，不使用 SSH 检查目录，不调用创建/删除/配置/SSL 动作；Cloudflare 诊断不创建、修改或删除记录。DNS Read 对精确候选名、`*.zone` 和 apex NS 的查询只能证明 API 当前返回的有限证据，不能排除父级/子级委派、其他层级通配符和解析链风险。正式写入阶段仍需重新检查并单独验收。
+
+# Phase 1K：默认复用通配符
+
+V1 正式部署计划不再包含“为每个子域创建精确 A 记录”。只有 Dry Run 在五分钟内取得完整 `wildcard_covered` 证据时，才生成 `reuse_existing_wildcard`；DNS create/update/delete 固定为 0。通配符不存在、指向其他 IP、启用代理、TTL/元数据不符、存在精确覆盖或 NS 委派时，流程保持 blocked/needs_attention/unsupported，等待管理员在 LandingOps 之外处理并重新预检。
+
+首次测试只允许静态模板、独立目录和零 DNS 写入。宝塔 26 站点的绑定详情必须通过 20+6 等有界批次全部完成，候选 FQDN 与根目录均无冲突后才能继续。目录、ACL、Nginx、FPM、同文件系统和 SSL 仍需独立真实验收；PHP 能力继续禁用。

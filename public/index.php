@@ -19,6 +19,7 @@ use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
+use LandingOps\ControlPlane\Service\CloudflareZoneDiscoveryService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
@@ -160,7 +161,14 @@ try {
         dnsPrechecks: $dnsPrechecks,
         baotaConfigs: $baotaConfigs,
         baotaReadOnly: $baotaReadOnly,
-        dryRuns: new DeploymentDryRunService($repository, $baotaReadOnly, $authorization),
+        dryRuns: new DeploymentDryRunService($repository, $baotaReadOnly, $authorization, dns: $dnsPrechecks),
+        zoneDiscoveries: new CloudflareZoneDiscoveryService(
+            $repository,
+            $secretCipher,
+            $cloudflareClient,
+            $authorization,
+            CloudflareDnsPrecheckService::confirmedIpv4FromEnvironment(),
+        ),
     );
 
     $response = $kernel->handle(new Request(

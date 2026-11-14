@@ -1,5 +1,5 @@
 import { api, apiList, jsonBody } from './api'
-import type { BaotaConfig, BaotaIsolationResult, BaotaPrecheck, BaotaSiteDiscovery, CloudflareConnection, CloudflareZone, ConfigFormContract, DeploymentDryRun, DnsPrecheckResult, Instance, ManagedTemplate, PrimaryDomain, Team, TemplateUploadResult, User } from '@/types/api'
+import type { BaotaConfig, BaotaIsolationResult, BaotaPrecheck, BaotaSiteDetailBatch, BaotaSiteDiscovery, CloudflareConnection, CloudflareZone, CloudflareZoneDiscovery, ConfigFormContract, DeploymentDryRun, DnsPrecheckResult, Instance, ManagedTemplate, PrimaryDomain, Team, TemplateUploadResult, User } from '@/types/api'
 
 export const listTeams = () => apiList<Team>('/api/v1/teams')
 export const createTeam = (input: { name: string; slug: string }) =>
@@ -40,6 +40,8 @@ export const updateCloudflareConnection = (id: string, input: { expected_version
   api<CloudflareConnection>(`/api/v1/cloudflare-connections/${id}`, { method: 'PATCH', body: jsonBody(input) })
 export const verifyCloudflareConnection = (id: string, input: { zone_id: string; expected_connection_version: number; expected_zone_version: number }) =>
   api<Record<string, unknown>>(`/api/v1/cloudflare-connections/${id}/verifications`, { method: 'POST', body: jsonBody(input) })
+export const discoverCloudflareZones = (id:string, expectedVersion:number) =>
+  api<CloudflareZoneDiscovery>(`/api/v1/cloudflare-connections/${id}/zone-discoveries`, { method:'POST', body:jsonBody({ expected_connection_version:expectedVersion }) })
 
 export const listCloudflareZones = () => apiList<CloudflareZone>('/api/v1/cloudflare-zones')
 export const createCloudflareZone = (input: { connection_id: string; external_zone_id: string; zone_name: string }) =>
@@ -65,6 +67,8 @@ export const saveBaotaConfig = (input: { base_url?: string; api_key?: string; ad
 export const verifyBaota = (expectedVersion: number) =>
   api<{ config: BaotaConfig; result: Record<string, unknown> }>('/api/v1/settings/baota/verifications', { method: 'POST', body: jsonBody({ expected_version: expectedVersion }) })
 export const listBaotaSites = () => api<BaotaSiteDiscovery>('/api/v1/settings/baota/sites')
+export const loadBaotaSiteDetailBatch = (offset:number, limit=20) =>
+  api<BaotaSiteDetailBatch>('/api/v1/settings/baota/site-detail-batches', { method:'POST', body:jsonBody({ offset, limit }) })
 export const precheckBaota = (hostname: string) =>
   api<BaotaPrecheck>('/api/v1/settings/baota/prechecks', { method: 'POST', body: jsonBody({ hostname }) })
 export const getBaotaIsolation = () => api<BaotaIsolationResult>('/api/v1/settings/baota/isolation-checks')

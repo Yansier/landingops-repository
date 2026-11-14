@@ -83,6 +83,9 @@ return [
         TestHarness::assertFalse($result['configuration']['values_returned']);
         TestHarness::assertFalse($result['mutations_performed']);
         TestHarness::assertSame(false, $result['plan']['steps'][0]['execute']);
+        TestHarness::assertSame(0, $result['plan']['dns']['dns_records_to_create']);
+        TestHarness::assertFalse($result['plan']['dns']['dns_write_required']);
+        TestHarness::assertNotContains('创建 DNS A 记录', json_encode($result['plan'], JSON_THROW_ON_ERROR));
         TestHarness::assertSame($before, serialize([$repository->instances, $repository->domainReservations, $repository->audits]));
         $encoded = json_encode($result, JSON_THROW_ON_ERROR);
         TestHarness::assertNotContains('server-only note', $encoded);

@@ -14,6 +14,7 @@ use LandingOps\ControlPlane\Service\BaotaReadOnlyService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
+use LandingOps\ControlPlane\Service\CloudflareZoneDiscoveryService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\DeploymentDryRunService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
@@ -42,6 +43,7 @@ final class ControlPlaneKernel
         private readonly ?BaotaConfigService $baotaConfigs = null,
         private readonly ?BaotaReadOnlyService $baotaReadOnly = null,
         private readonly ?DeploymentDryRunService $dryRuns = null,
+        private readonly ?CloudflareZoneDiscoveryService $zoneDiscoveries = null,
     ) {
     }
 
@@ -265,6 +267,19 @@ final class ControlPlaneKernel
                 $requestId,
             ), $requestId);
         }
+        if ($method === 'POST'
+            && preg_match('~^/api/v1/cloudflare-connections/([0-9A-HJKMNP-TV-Z]{26})/zone-discoveries$~D', $path, $matches) === 1
+        ) {
+            $this->csrf($request, $session);
+            if ($this->zoneDiscoveries === null) {
+                throw new ApiException(501, 'not_implemented', 'Zone 自动发现服务未配置。');
+            }
+            return $this->success($this->zoneDiscoveries->discover(
+                $principal,
+                $matches[1],
+                $this->integer($request->body, 'expected_connection_version'),
+            ), $requestId);
+        }
         if ($method === 'GET' && $path === '/api/v1/cloudflare-zones') {
             return $this->list($this->domainManagement()->listZones($principal), $requestId);
         }
@@ -333,6 +348,14 @@ final class ControlPlaneKernel
         }
         if ($method === 'GET' && $path === '/api/v1/settings/baota/sites') {
             return $this->success($this->baotaReadOnlyManagement()->sites($principal), $requestId);
+        }
+        if ($method === 'POST' && $path === '/api/v1/settings/baota/site-detail-batches') {
+            $this->csrf($request, $session);
+            return $this->success($this->baotaReadOnlyManagement()->siteDetailBatch(
+                $principal,
+                $this->integer($request->body, 'offset'),
+                $this->integer($request->body, 'limit'),
+            ), $requestId);
         }
         if ($method === 'POST' && $path === '/api/v1/settings/baota/prechecks') {
             $this->csrf($request, $session);

@@ -15,6 +15,7 @@ use LandingOps\ControlPlane\Service\AccountService;
 use LandingOps\ControlPlane\Service\CloudflareConnectionService;
 use LandingOps\ControlPlane\Service\CloudflareDnsPrecheckService;
 use LandingOps\ControlPlane\Service\CloudflareVerificationService;
+use LandingOps\ControlPlane\Service\CloudflareZoneDiscoveryService;
 use LandingOps\ControlPlane\Service\DomainResourceService;
 use LandingOps\ControlPlane\Service\OwnershipTransferService;
 use LandingOps\ControlPlane\Service\ResourceAccessService;
@@ -311,7 +312,7 @@ return [
         TestHarness::assertSame('invalid', $repository->cloudflareConnections[$connection['id']]['verification_status']);
     },
 
-    'dns precheck classifies clear compatible and conflicting records without writes' => static function (): void {
+    'dns precheck proves applicable wildcard and rejects exact or delegated overrides without writes' => static function (): void {
         [$repository, $principals] = controlFixture();
         [$connections, $domains, $cipher] = cloudflareServices($repository);
         $connection = $connections->create($principals[SUPER_ID], ['label' => 'DNS', 'api_token' => 'synthetic-token-value'], 'create');
@@ -321,37 +322,71 @@ return [
         $repository->cloudflareZones[$zone['id']]['verification_status'] = 'valid';
         $repository->cloudflareZones[$zone['id']]['verified_credential_context_version'] = 1;
         $repository->cloudflareZones[$zone['id']]['cloudflare_status'] = 'active';
-        $responses = [
+        $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'a1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'w1', 'type' => 'A', 'name' => '*.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'c1', 'type' => 'CNAME', 'name' => 'www.pages.example.com', 'content' => 'other.example.net', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'p1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => true, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 't1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 300]], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'm1', 'type' => 'A', 'name' => 'www.pages.example.com', 'content' => '203.0.113.10']], 'result_info' => ['total_pages' => 1]]),
-            cfResponse(200, ['success' => true, 'result' => [['id' => 'v1', 'type' => 'AAAA', 'name' => 'www.pages.example.com', 'content' => '2001:db8::1', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
-        ];
-        $service = new CloudflareDnsPrecheckService($repository, $cipher, new CloudflareReadOnlyClient(new FakeCloudflareTransport(...$responses), static function (int $microseconds): void {}), confirmedPublicIpv4: '203.0.113.10');
-        TestHarness::assertSame('clear', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
-        TestHarness::assertSame('compatible', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
-        TestHarness::assertSame('conflict', $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com')['classification']);
-        $proxied = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
-        TestHarness::assertSame('conflict', $proxied['classification']);
-        TestHarness::assertSame('proxied_mismatch', $proxied['issues'][0]['code']);
-        $ttl = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
-        TestHarness::assertSame('conflict', $ttl['classification']);
-        TestHarness::assertSame('ttl_mismatch', $ttl['issues'][0]['code']);
-        $missing = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
-        TestHarness::assertSame('needs_configuration', $missing['classification']);
-        TestHarness::assertSame(2, count($missing['issues']));
-        $aaaa = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
-        TestHarness::assertSame('conflict', $aaaa['classification']);
-        TestHarness::assertContains('通配符', implode(' ', $aaaa['limitations']));
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'w1', 'type' => 'A', 'name' => '*.pages.example.com', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [['id' => 'ns1', 'type' => 'NS', 'name' => 'pages.example.com', 'content' => 'ns.other.test', 'ttl' => 3600]], 'result_info' => ['total_pages' => 1]]),
+        );
+        $service = new CloudflareDnsPrecheckService($repository, $cipher, new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {}), confirmedPublicIpv4: '203.0.113.10');
+        $reusable = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('wildcard_covered', $reusable['classification']);
+        TestHarness::assertSame('reuse_existing_wildcard', $reusable['dns_strategy']);
+        TestHarness::assertSame(0, $reusable['dns_records_to_create']);
+        $blocked = $service->check($principals[SUPER_ID], $domain['id'], 'www.pages.example.com');
+        TestHarness::assertSame('conflict', $blocked['classification']);
+        TestHarness::assertTrue(in_array('exact_record_overrides_wildcard', array_column($blocked['issues'], 'code'), true));
+        TestHarness::assertTrue(in_array('subdomain_delegation_present', array_column($blocked['issues'], 'code'), true));
+        TestHarness::assertFalse($blocked['write_operations_performed']);
+    },
+
+    'zone discovery screens each connection without registration or team grants' => static function (): void {
+        [$repository, $principals] = controlFixture();
+        [$connections, , $cipher] = cloudflareServices($repository);
+        $connection = $connections->create($principals[SUPER_ID], [
+            'label' => 'Discovery', 'account_external_id' => 'acct_1', 'api_token' => 'synthetic-token-value',
+        ], 'create');
+        $transport = new FakeCloudflareTransport(
+            cfResponse(200, ['success' => true, 'result' => [[
+                'id' => 'zone_a', 'name' => 'a.example', 'status' => 'active', 'account' => ['id' => 'acct_1'],
+            ], [
+                'id' => 'zone_b', 'name' => 'b.example', 'status' => 'active', 'account' => ['id' => 'acct_1'],
+            ]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [[
+                'id' => 'wild-a', 'type' => 'A', 'name' => '*.a.example', 'content' => '203.0.113.10', 'proxied' => false, 'ttl' => 1,
+            ]], 'result_info' => ['total_pages' => 1]]),
+            cfResponse(200, ['success' => true, 'result' => [[
+                'id' => 'wild-b', 'type' => 'A', 'name' => '*.b.example', 'content' => '203.0.113.99', 'proxied' => false, 'ttl' => 1,
+            ]], 'result_info' => ['total_pages' => 1]]),
+        );
+        $result = (new CloudflareZoneDiscoveryService(
+            $repository,
+            $cipher,
+            new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {}),
+            confirmedPublicIpv4: '203.0.113.10',
+        ))->discover($principals[SUPER_ID], $connection['id'], 1);
+        TestHarness::assertSame('matched_server', $result['zones'][0]['classification']);
+        TestHarness::assertSame('other_server', $result['zones'][1]['classification']);
+        TestHarness::assertSame([], $repository->cloudflareZones);
+        TestHarness::assertSame([], $repository->domainGrants);
+        TestHarness::assertFalse($result['write_operations_performed']);
     },
 
     'cloudflare and domain API routes require session csrf and server authorization' => static function (): void {
         [$repository] = controlFixture();
-        [$connections, $domains] = cloudflareServices($repository);
+        [$connections, $domains, $cipher] = cloudflareServices($repository);
         $authorization = new AuthorizationService();
+        $zoneDiscoveries = new CloudflareZoneDiscoveryService(
+            $repository,
+            $cipher,
+            new CloudflareReadOnlyClient(new FakeCloudflareTransport(
+                cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
+            ), static function (int $microseconds): void {}),
+            $authorization,
+            '203.0.113.10',
+        );
         $kernel = new ControlPlaneKernel(
             new SessionService($repository),
             new AccountService($repository, $authorization),
@@ -359,6 +394,7 @@ return [
             new OwnershipTransferService($repository, $authorization),
             cloudflareConnections: $connections,
             domains: $domains,
+            zoneDiscoveries: $zoneDiscoveries,
         );
         $login = $kernel->handle(new Request('POST', '/api/v1/login', [], [], [
             'email' => 'root@example.test', 'password' => 'Correct horse battery staple 123!',
@@ -375,6 +411,17 @@ return [
         $encoded = json_encode($created->body, JSON_THROW_ON_ERROR);
         TestHarness::assertNotContains('api-route-secret-token', $encoded);
         TestHarness::assertNotContains('token_ciphertext', $encoded);
+        $missingCsrf = $kernel->handle(new Request(
+            'POST', "/api/v1/cloudflare-connections/{$created->body['data']['id']}/zone-discoveries", [],
+            [ControlPlaneKernel::COOKIE => $cookie], ['expected_connection_version' => 1],
+        ));
+        TestHarness::assertSame(403, $missingCsrf->status);
+        $discovered = $kernel->handle(new Request(
+            'POST', "/api/v1/cloudflare-connections/{$created->body['data']['id']}/zone-discoveries", ['X-CSRF-Token' => $csrf],
+            [ControlPlaneKernel::COOKIE => $cookie], ['expected_connection_version' => 1],
+        ));
+        TestHarness::assertSame(200, $discovered->status);
+        TestHarness::assertFalse($discovered->body['data']['write_operations_performed']);
 
         $staffLogin = $kernel->handle(new Request('POST', '/api/v1/login', [], [], [
             'email' => 'staff-a@example.test', 'password' => 'Correct horse battery staple 123!',

@@ -108,6 +108,16 @@ final class BaotaReadOnlyService
         return $this->discoverSites($config, $key);
     }
 
+    /** @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>,batch:array<string,mixed>} */
+    public function siteDetailBatch(Principal $actor, int $offset, int $limit): array
+    {
+        if ($offset < 0 || $limit < 1 || $limit > self::DETAIL_QUERY_BUDGET) {
+            throw new ApiException(422, 'baota_detail_batch_invalid', '站点详情批次 offset 或 limit 无效。');
+        }
+        [$config, $key] = $this->credentials($actor);
+        return $this->discoverSites($config, $key, $offset, $limit);
+    }
+
     /** @return array<string,mixed> */
     public function precheck(Principal $actor, string $hostname): array
     {
@@ -256,6 +266,9 @@ final class BaotaReadOnlyService
                 ['key' => 'nginx_private_directory_isolation', 'status' => 'unsupported', 'message' => '未读取或修改 Nginx 配置，无法证明 private 目录隔离。'],
                 ['key' => 'atomic_release_same_filesystem', 'status' => 'unsupported', 'message' => '面板 API 无法证明 release 与切换指针位于同一文件系统。'],
                 ['key' => 'default_files_identification', 'status' => 'unsupported', 'message' => '未读取生产目录，无法安全识别宝塔默认文件。'],
+                ['key' => 'authorized_parent_directory', 'status' => 'unsupported', 'message' => '尚未授权并只读核验 LandingOps 独立部署父目录。'],
+                ['key' => 'disk_free_space', 'status' => 'unsupported', 'message' => '固定只读 API 未提供目标文件系统可用空间证据。'],
+                ['key' => 'nginx_version_and_vhost_boundary', 'status' => 'unsupported', 'message' => '未读取 Nginx 配置或版本，无法证明虚拟主机与 private 边界。'],
             ],
             'php_deployment' => ['status' => 'disabled', 'message' => 'Unix 用户、FPM pool 与 private 隔离未全部确认，未来 PHP 部署保持禁用。'],
             'mutations_performed' => false,
@@ -263,18 +276,22 @@ final class BaotaReadOnlyService
     }
 
     /** @param array<string,mixed> $config @return array{sites:list<array<string,mixed>>,inventory:array<string,mixed>} */
-    private function discoverSites(array $config, string $key): array
+    private function discoverSites(array $config, string $key, int $detailOffset = 0, int $detailLimit = self::DETAIL_QUERY_BUDGET): array
     {
         $inventory = $this->gateway->siteInventory((string) $config['base_url'], $key);
         $rows = is_array($inventory['sites'] ?? null) ? $inventory['sites'] : [];
+        if ($detailOffset > count($rows)) {
+            throw new ApiException(422, 'baota_detail_batch_invalid', '站点详情批次 offset 超出当前清单。');
+        }
         $instances = $this->repository->listInstances(null, null);
         $result = [];
         $detailQueries = 0;
         $detailFailures = 0;
-        foreach ($rows as $row) {
+        foreach ($rows as $index => $row) {
             $domains = [];
-            $domainStatus = 'budget_exhausted';
-            if (is_int($row['external_id'] ?? null) && $detailQueries < self::DETAIL_QUERY_BUDGET) {
+            $inBatch = $index >= $detailOffset && $index < ($detailOffset + $detailLimit);
+            $domainStatus = $inBatch ? 'unsupported' : 'not_in_batch';
+            if ($inBatch && is_int($row['external_id'] ?? null) && $detailQueries < $detailLimit) {
                 $detailQueries++;
                 try {
                     $domainResult = $this->gateway->siteDomains((string) $config['base_url'], $key, $row['external_id']);
@@ -305,7 +322,12 @@ final class BaotaReadOnlyService
             $site['ownership'] = $this->ownership->evaluate($site, $instances);
             $result[] = $site;
         }
-        $detailsComplete = count($rows) <= self::DETAIL_QUERY_BUDGET && $detailFailures === 0;
+        $batchEnd = min(count($rows), $detailOffset + $detailLimit);
+        $batchComplete = $detailOffset <= count($rows)
+            && $detailQueries === ($batchEnd - $detailOffset)
+            && $detailFailures === 0;
+        $detailsComplete = $detailOffset === 0 && count($rows) <= $detailLimit && $batchComplete;
+        $observedAt = $this->clock->sql();
         return [
             'sites' => $result,
             'inventory' => [
@@ -314,13 +336,23 @@ final class BaotaReadOnlyService
                 'listing_reason' => $inventory['reason'] ?? null,
                 'pages' => (int) ($inventory['pages'] ?? 0),
                 'site_limit' => (int) ($inventory['site_limit'] ?? 200),
-                'detail_query_budget' => self::DETAIL_QUERY_BUDGET,
+                'detail_query_budget' => $detailLimit,
                 'detail_queries_used' => $detailQueries,
                 'detail_failures' => $detailFailures,
                 'details_complete' => $detailsComplete,
                 'reason' => !($inventory['complete'] ?? false)
                     ? ($inventory['reason'] ?? 'listing_incomplete')
-                    : (!$detailsComplete ? ($detailFailures > 0 ? 'detail_query_failed' : 'detail_budget_exhausted') : null),
+                    : (!$detailsComplete ? ($detailFailures > 0 ? 'detail_query_failed' : 'detail_batches_remaining') : null),
+            ],
+            'batch' => [
+                'offset' => $detailOffset,
+                'limit' => $detailLimit,
+                'processed' => $detailQueries,
+                'complete' => $batchComplete,
+                'next_offset' => !$batchComplete ? $detailOffset : ($batchEnd < count($rows) ? $batchEnd : null),
+                'total_sites' => count($rows),
+                'observed_at' => $observedAt,
+                'write_operations_performed' => false,
             ],
         ];
     }
