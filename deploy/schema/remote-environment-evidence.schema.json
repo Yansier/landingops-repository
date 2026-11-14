@@ -14,7 +14,7 @@
     "schema_version": {"const": "landingops-remote-evidence/1.0"},
     "source": {"const": "trusted_ssh_readonly_collector"},
     "trust_level": {"const": "verified_read_only_session"},
-    "collector_version": {"const": "phase-1m-a1/2.0"},
+    "collector_version": {"const": "phase-1m-a1.1/2.1"},
     "classification": {"enum": ["readonly_verified_with_pending_writes", "readonly_blocked"]},
     "observed_at": {"type": "string", "format": "date-time"},
     "expires_at": {"type": "string", "format": "date-time"},
@@ -44,9 +44,12 @@
     "errors": {"type": "array", "items": {"type": "object"}},
     "command_policy": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "probe_count", "arbitrary_commands_allowed"],
+      "required": ["id", "protocol_version", "probe_scope_version", "checked_install_root", "probe_count", "arbitrary_commands_allowed"],
       "properties": {
         "id": {"const": "landingops-linux-readonly-v2"},
+        "protocol_version": {"const": "landingops-ssh-readonly/2"},
+        "probe_scope_version": {"const": "landingops-install-scope/1"},
+        "checked_install_root": {"const": "/srv/landingops"},
         "probe_count": {"type": "integer", "minimum": 1},
         "arbitrary_commands_allowed": {"const": false}
       }

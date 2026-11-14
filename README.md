@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1M-A.1（forced-command 安全兼容改造）**。客户端只请求版本化固定命令，未来服务端 wrapper 精确匹配 `SSH_ORIGINAL_COMMAND`、丢弃 stdin 并启动 root-owned probe；真实账号、服务器文件和 SSH 会话仍未创建。真实服务器写入继续禁用。
+> 当前状态：**Phase 1M-A.1.1（服务器安装前最终兼容性修复）**。v2 probe 与固定 `/srv/landingops` scope 已绑定，SSH 边界审计使用真实预期来源上下文；隔离 OpenSSH 行为测试和服务器安装 Runbook 已准备。真实账号、服务器文件和 SSH 会话仍未创建，服务器写入继续禁用。
 
 ## 最重要的边界
 
@@ -43,6 +43,8 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1M-A 环境报告](docs/PHASE_1M_A_ENVIRONMENT_REPORT.md) | 已知事实、真实 SSH SKIP 原因及未确认项目 |
 | [Phase 1M-A 首次安装计划](docs/PHASE_1M_A_INSTALL_PLAN.md) | 人工准备、待授权修改、缺失证据和 1M-B 边界 |
 | [Phase 1M-A.1 forced-command 安全改造](docs/PHASE_1M_A1.md) | v2 固定协议、root-owned probe、SSH 权限边界、未来安装清单与精确回退 |
+| [Phase 1M-A.1.1 最终兼容性修复](docs/PHASE_1M_A11.md) | 固定安装根证据、真实来源 SSH 审计、隔离 OpenSSH 测试状态与验收结果 |
+| [Phase 1M-A.1.1 服务器安装 Runbook](docs/PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md) | 固定 probe scope、来源感知认证审计、分步安装/停止/回退与首次 collect/verify/plan |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 

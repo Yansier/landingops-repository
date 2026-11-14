@@ -7,6 +7,7 @@ HOME_DIR='/var/lib/landingops-audit'
 AUTHORIZED_KEYS="$HOME_DIR/.ssh/authorized_keys"
 WRAPPER='/usr/local/libexec/landingops-readonly-wrapper'
 PROBE='/usr/local/libexec/landingops-readonly-probe-v2'
+CONTEXT='/etc/landingops/ssh-audit-context.conf'
 
 [ "$(/usr/bin/id -u)" -eq 0 ] || exit 77
 
@@ -17,11 +18,38 @@ check_file() {
     [ "$actual" = "$expected_owner|$expected_group|$expected_mode|$expected_type" ]
 }
 
-entry=$(/usr/bin/getent passwd "$ACCOUNT") || exit 78
-uid=$(printf '%s' "$entry" | /usr/bin/cut -d: -f3)
-gid=$(printf '%s' "$entry" | /usr/bin/cut -d: -f4)
-home=$(printf '%s' "$entry" | /usr/bin/cut -d: -f6)
-shell=$(printf '%s' "$entry" | /usr/bin/cut -d: -f7)
+context_boundary=false
+check_file "$CONTEXT" root root 600 'regular file' && context_boundary=true
+[ "$context_boundary" = true ] || exit 78
+context_lines=$(/usr/bin/awk 'NF {count++} END {print count+0}' "$CONTEXT")
+context_unknown=$(/usr/bin/awk -F= 'NF && $1!="schema_version" && $1!="source_address" && $1!="source_host" && $1!="local_address" && $1!="local_port" {count++} END {print count+0}' "$CONTEXT")
+schema_count=$(/usr/bin/grep -c '^schema_version=landingops-ssh-audit-context/1$' "$CONTEXT" || true)
+source_count=$(/usr/bin/grep -c '^source_address=' "$CONTEXT" || true)
+host_count=$(/usr/bin/grep -c '^source_host=' "$CONTEXT" || true)
+local_address_count=$(/usr/bin/grep -c '^local_address=' "$CONTEXT" || true)
+local_port_count=$(/usr/bin/grep -c '^local_port=' "$CONTEXT" || true)
+[ "$context_lines" -eq 5 ] && [ "$context_unknown" -eq 0 ] && [ "$schema_count" -eq 1 ] && [ "$source_count" -eq 1 ] && [ "$host_count" -eq 1 ] && [ "$local_address_count" -eq 1 ] && [ "$local_port_count" -eq 1 ] || exit 78
+source_address=$(/usr/bin/awk -F= '$1=="source_address" {print substr($0,length($1)+2)}' "$CONTEXT")
+source_host=$(/usr/bin/awk -F= '$1=="source_host" {print substr($0,length($1)+2)}' "$CONTEXT")
+local_address=$(/usr/bin/awk -F= '$1=="local_address" {print substr($0,length($1)+2)}' "$CONTEXT")
+local_port=$(/usr/bin/awk -F= '$1=="local_port" {print substr($0,length($1)+2)}' "$CONTEXT")
+/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_loopback and not value.is_unspecified' "$source_address" >/dev/null 2>&1 || exit 78
+/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_unspecified' "$local_address" >/dev/null 2>&1 || exit 78
+/usr/bin/printf '%s\n' "$source_host" | /usr/bin/grep -Eq '^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$' || exit 78
+case "$local_port" in ''|*[!0-9]*) exit 78;; esac
+[ "$local_port" -ge 1 ] && [ "$local_port" -le 65535 ] || exit 78
+/usr/bin/getent ahosts "$source_host" 2>/dev/null | /usr/bin/awk '{print $1}' \
+    | /usr/bin/python3 -c 'import ipaddress,sys; expected=ipaddress.ip_address(sys.argv[1]); assert any(ipaddress.ip_address(line.strip()) == expected for line in sys.stdin if line.strip())' "$source_address" || exit 78
+set -- ${SSH_CONNECTION-}
+[ "$#" -eq 4 ] || exit 78
+[ "$1" = "$source_address" ] && [ "$3" = "$local_address" ] && [ "$4" = "$local_port" ] || exit 78
+source_context_hash=$(/usr/bin/printf '%s|%s|%s|%s' "$source_address" "$source_host" "$local_address" "$local_port" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
+
+entry=$(/usr/bin/getent passwd "$ACCOUNT") || exit 79
+uid=$(/usr/bin/printf '%s' "$entry" | /usr/bin/cut -d: -f3)
+gid=$(/usr/bin/printf '%s' "$entry" | /usr/bin/cut -d: -f4)
+home=$(/usr/bin/printf '%s' "$entry" | /usr/bin/cut -d: -f6)
+shell=$(/usr/bin/printf '%s' "$entry" | /usr/bin/cut -d: -f7)
 groups=$(/usr/bin/id -Gn "$ACCOUNT")
 password_state=$(/usr/bin/passwd -S "$ACCOUNT" 2>/dev/null | /usr/bin/awk '{print $2}')
 key_lines=$(/usr/bin/awk 'NF && $1 !~ /^#/' "$AUTHORIZED_KEYS" 2>/dev/null | /usr/bin/wc -l | /usr/bin/tr -d ' ')
@@ -29,11 +57,27 @@ key_policy_ok=false
 if [ "$key_lines" = 1 ] && /usr/bin/grep -Eq '^restrict,command="/usr/local/libexec/landingops-readonly-wrapper" ssh-ed25519 [A-Za-z0-9+/=]+ landingops-audit(@[A-Za-z0-9._-]+)?$' "$AUTHORIZED_KEYS"; then
     key_policy_ok=true
 fi
-sshd_effective=$(/usr/sbin/sshd -T -C "user=$ACCOUNT,host=localhost,addr=127.0.0.1" 2>/dev/null) || sshd_effective=''
-pubkey_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="pubkeyauthentication" {print $2; exit}')
-authorized_keys_file=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="authorizedkeysfile" {print $2; exit}')
-password_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="passwordauthentication" {print $2; exit}')
-kbd_auth=$(/usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk '$1=="kbdinteractiveauthentication" {print $2; exit}')
+
+# -C applies Match blocks using the expected real client address, never localhost by default.
+sshd_effective=$(/usr/sbin/sshd -T -C "user=$ACCOUNT,host=$source_host,addr=$source_address,laddr=$local_address,lport=$local_port" 2>/dev/null) || exit 80
+sshd_value() { /usr/bin/printf '%s\n' "$sshd_effective" | /usr/bin/awk -v key="$1" '$1==key {$1=""; sub(/^ /,""); print; exit}'; }
+password_auth=$(sshd_value passwordauthentication)
+kbd_auth=$(sshd_value kbdinteractiveauthentication)
+pubkey_auth=$(sshd_value pubkeyauthentication)
+authentication_methods=$(sshd_value authenticationmethods)
+authorized_keys_file=$(sshd_value authorizedkeysfile)
+authorized_keys_command=$(sshd_value authorizedkeyscommand)
+trusted_user_ca_keys=$(sshd_value trustedusercakeys)
+force_command=$(sshd_value forcecommand)
+permit_user_environment=$(sshd_value permituserenvironment)
+hostbased_auth=$(sshd_value hostbasedauthentication)
+gssapi_auth=$(sshd_value gssapiauthentication)
+disable_forwarding=$(sshd_value disableforwarding)
+allow_agent_forwarding=$(sshd_value allowagentforwarding)
+allow_tcp_forwarding=$(sshd_value allowtcpforwarding)
+x11_forwarding=$(sshd_value x11forwarding)
+permit_tty=$(sshd_value permittty)
+permit_user_rc=$(sshd_value permituserrc)
 
 non_root=false; [ "$uid" -ne 0 ] && [ "$gid" -ne 0 ] && non_root=true
 primary_group_only=false; [ "$groups" = "$ACCOUNT" ] && primary_group_only=true
@@ -45,16 +89,23 @@ ssh_boundary=false; check_file "$HOME_DIR/.ssh" root root 755 directory && ssh_b
 authorized_keys_boundary=false; check_file "$AUTHORIZED_KEYS" root root 644 'regular file' && authorized_keys_boundary=true
 wrapper_boundary=false; check_file "$WRAPPER" root root 755 'regular file' && wrapper_boundary=true
 probe_boundary=false; check_file "$PROBE" root root 755 'regular file' && probe_boundary=true
-effective_policy_ok=false
-if [ "$pubkey_auth" = yes ] && /usr/bin/printf '%s\n' "$authorized_keys_file" | /usr/bin/grep -Eq '(^| )\.ssh/authorized_keys( |$)'; then
-    effective_policy_ok=true
+effective_auth_ok=false
+if [ "$password_auth" = no ] && [ "$kbd_auth" = no ] && [ "$pubkey_auth" = yes ] \
+    && [ "$authentication_methods" = publickey ] && [ "$authorized_keys_file" = '.ssh/authorized_keys' ] \
+    && [ "$authorized_keys_command" = none ] && [ "$trusted_user_ca_keys" = none ] \
+    && [ "$force_command" = none ] && [ "$permit_user_environment" = no ] \
+    && [ "$hostbased_auth" = no ] && [ "$gssapi_auth" = no ]; then
+    effective_auth_ok=true
 fi
+
 boundary_safe=true
-for value in "$non_root" "$primary_group_only" "$password_locked" "$home_matches" "$shell_matches" "$home_boundary" "$ssh_boundary" "$authorized_keys_boundary" "$wrapper_boundary" "$probe_boundary" "$key_policy_ok" "$effective_policy_ok"; do
+for value in "$context_boundary" "$non_root" "$primary_group_only" "$password_locked" "$home_matches" "$shell_matches" "$home_boundary" "$ssh_boundary" "$authorized_keys_boundary" "$wrapper_boundary" "$probe_boundary" "$key_policy_ok" "$effective_auth_ok"; do
     [ "$value" = true ] || boundary_safe=false
 done
 
 printf 'account=%s\n' "$ACCOUNT"
+printf 'source_context_loaded=true\n'
+printf 'source_context_hash=%s\n' "$source_context_hash"
 printf 'non_root=%s\n' "$non_root"
 printf 'primary_group_only=%s\n' "$primary_group_only"
 printf 'password_locked=%s\n' "$password_locked"
@@ -63,15 +114,29 @@ printf 'shell_matches=%s\n' "$shell_matches"
 printf 'home_boundary=%s\n' "$home_boundary"
 printf 'ssh_boundary=%s\n' "$ssh_boundary"
 printf 'authorized_keys_boundary=%s\n' "$authorized_keys_boundary"
+printf 'authorized_key_entry_count=%s\n' "$key_lines"
 printf 'wrapper_boundary=%s\n' "$wrapper_boundary"
 printf 'probe_boundary=%s\n' "$probe_boundary"
 printf 'authorized_key_policy=%s\n' "$key_policy_ok"
-printf 'effective_policy_ok=%s\n' "$effective_policy_ok"
-printf 'effective_pubkey_authentication=%s\n' "${pubkey_auth:-unknown}"
-printf 'effective_authorized_keys_path=%s\n' "${authorized_keys_file:-unknown}"
 printf 'effective_password_authentication=%s\n' "${password_auth:-unknown}"
 printf 'effective_keyboard_interactive=%s\n' "${kbd_auth:-unknown}"
+printf 'effective_pubkey_authentication=%s\n' "${pubkey_auth:-unknown}"
+printf 'effective_authentication_methods=%s\n' "${authentication_methods:-unknown}"
+printf 'effective_authorized_keys_path=%s\n' "${authorized_keys_file:-unknown}"
+printf 'effective_authorized_keys_command=%s\n' "${authorized_keys_command:-unknown}"
+printf 'effective_trusted_user_ca_keys=%s\n' "${trusted_user_ca_keys:-unknown}"
+printf 'effective_force_command=%s\n' "${force_command:-unknown}"
+printf 'effective_permit_user_environment=%s\n' "${permit_user_environment:-unknown}"
+printf 'effective_hostbased_authentication=%s\n' "${hostbased_auth:-unknown}"
+printf 'effective_gssapi_authentication=%s\n' "${gssapi_auth:-unknown}"
+printf 'effective_disable_forwarding=%s\n' "${disable_forwarding:-unknown}"
+printf 'effective_allow_agent_forwarding=%s\n' "${allow_agent_forwarding:-unknown}"
+printf 'effective_allow_tcp_forwarding=%s\n' "${allow_tcp_forwarding:-unknown}"
+printf 'effective_x11_forwarding=%s\n' "${x11_forwarding:-unknown}"
+printf 'effective_permit_tty=%s\n' "${permit_tty:-unknown}"
+printf 'effective_permit_user_rc=%s\n' "${permit_user_rc:-unknown}"
+printf 'effective_authentication_policy_ok=%s\n' "$effective_auth_ok"
 printf 'boundary_safe=%s\n' "$boundary_safe"
 printf 'sshd_config_modified=false\n'
 printf 'write_operations_performed=false\n'
-[ "$boundary_safe" = true ] || exit 79
+[ "$boundary_safe" = true ] || exit 81

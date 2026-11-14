@@ -149,6 +149,8 @@ baota_version() { [ -r /www/server/panel/data/version.pl ] && /usr/bin/head -n 1
 
 emit_value protocol_version 'landingops-ssh-readonly/2'
 emit_value command_policy_id 'landingops-linux-readonly-v2'
+emit_value probe_scope_version 'landingops-install-scope/1'
+emit_value probe_install_root "$INSTALL_ROOT"
 emit_value write_operations_performed 'false'
 for probe in identity_user identity_uid identity_gid identity_group os_release architecture php_version php_extensions php_fpm_versions php_runtime_matrix nginx_version nginx_vhost_capability disk filesystem target_state installation_marker parent_stat ancestor_symlinks acl_summary site_roots site_config_count site_root_declaration_count site_non_absolute_root_count site_unreadable_count site_symlink_count database_client database_server_binary database_runtime_binary baota_version; do
     emit_function "$probe" "$probe"

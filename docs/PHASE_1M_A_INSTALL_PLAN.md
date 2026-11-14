@@ -10,9 +10,10 @@
 ## 需要人工准备
 
 1. 审批并创建非 root `landingops-audit`，安装 root-owned v2 forced-command wrapper/probe，并写入受 `restrict` 保护的单一 Ed25519 公钥；精确清单和回退见 Phase 1M-A.1。
-2. 在仓库外准备真实部署配置，记录已核对 SSH 指纹，不保存任何密码或私钥。
-3. 运行一次真实 `collect`，确认 `/srv/landingops` 状态、26 个外部站点根路径、PHP/Nginx、磁盘和数据库二进制。
-4. 对只读证据中的 blockers、pending 和过期时间进行人工复核。
+2. 以服务器实际观察到的连接来源建立 root-owned SSH 审计上下文；`sshd -T -C` 的 publickey-only 边界未通过时停止，不修改现有 sshd 配置。
+3. 在仓库外准备真实部署配置，记录已核对 SSH 指纹，不保存任何密码或私钥，安装根必须精确为 `/srv/landingops`。
+4. 运行一次真实 `collect`，确认 probe scope、`/srv/landingops` 状态、26 个外部站点根路径、PHP/Nginx、磁盘和数据库二进制。
+5. 对只读证据中的 blockers、pending 和过期时间进行人工复核。
 
 ## 必须单独授权的服务器修改
 

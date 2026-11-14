@@ -9,6 +9,8 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
     public const POLICY_ID = 'landingops-linux-readonly-v2';
     public const PROTOCOL_VERSION = 'landingops-ssh-readonly/2';
     public const REMOTE_COMMAND = 'landingops-readonly collect v2';
+    public const PROBE_SCOPE_VERSION = 'landingops-install-scope/1';
+    public const FIXED_INSTALL_ROOT = '/srv/landingops';
     private const MAX_OUTPUT_BYTES = 1048576;
 
     public function __construct(
@@ -21,6 +23,7 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
 
     public function collect(DeploymentConfig $config): array
     {
+        self::assertSupportedInstallRoot($config);
         $target = $config->all()['target'];
         $host = (string) $target['ssh_host'];
         $port = (int) $target['ssh_port'];
@@ -89,6 +92,15 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         }
     }
 
+    public static function assertSupportedInstallRoot(DeploymentConfig $config): void
+    {
+        if (!hash_equals(self::FIXED_INSTALL_ROOT, $config->installRoot())) {
+            throw new DeploymentException('ssh_probe_scope_unsupported', 'v2 固定只读探针仅支持 /srv/landingops 安装根；未建立 SSH 会话。', [
+                'supported_install_root' => self::FIXED_INSTALL_ROOT,
+            ]);
+        }
+    }
+
     /** @return array{line:string,type:string}|null */
     private function matchingHostKey(string $scan, string $expected): ?array
     {
@@ -138,6 +150,8 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         $required = [
             'protocol_version' => self::PROTOCOL_VERSION,
             'command_policy_id' => self::POLICY_ID,
+            'probe_scope_version' => self::PROBE_SCOPE_VERSION,
+            'probe_install_root' => self::FIXED_INSTALL_ROOT,
             'write_operations_performed' => 'false',
         ];
         foreach ($required as $probe => $expected) {

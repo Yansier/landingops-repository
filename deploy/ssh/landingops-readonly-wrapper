@@ -11,6 +11,9 @@ fi
 if [ -n "${SSH_TTY-}" ]; then
     exit 65
 fi
+if [ -n "${SSH_AUTH_SOCK-}" ] || [ -n "${DISPLAY-}" ]; then
+    exit 67
+fi
 
 # Client input is deliberately discarded. The fixed probe receives no arguments.
 exec </dev/null

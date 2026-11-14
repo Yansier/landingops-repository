@@ -88,6 +88,8 @@ OpenSSH `restrict` 同时禁用端口转发、Agent 转发、X11、PTY 和 `~/.s
 
 下一轮必须单独批准：创建账号/组、安装上述文件、写入公钥、生成一次摘要、运行边界检查和建立首次真实只读会话。任何实际命令仍需先展示变更计划。Phase 1M-B 安装权限未开放。
 
+服务器逐步安装、停止条件和分步回退见 [Phase 1M-A.1.1 安装 Runbook](PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md)。v2 probe scope 固定为 `/srv/landingops`，不接受客户端路径参数。
+
 ## 9. 本地验收结果
 
 - PHP 自动化：151 passed，0 failed；

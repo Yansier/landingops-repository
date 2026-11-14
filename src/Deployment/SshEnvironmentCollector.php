@@ -6,9 +6,9 @@ namespace LandingOps\Deployment;
 
 final class SshEnvironmentCollector
 {
-    public const VERSION = 'phase-1m-a1/2.0';
+    public const VERSION = 'phase-1m-a1.1/2.1';
     private const REQUIRED_PROBES = [
-        'protocol_version', 'command_policy_id', 'write_operations_performed',
+        'protocol_version', 'command_policy_id', 'probe_scope_version', 'probe_install_root', 'write_operations_performed',
         'identity_user', 'identity_uid', 'identity_gid', 'identity_group', 'os_release', 'architecture',
         'php_version', 'php_extensions', 'php_fpm_versions', 'php_runtime_matrix', 'nginx_version', 'nginx_vhost_capability',
         'disk', 'filesystem', 'target_state', 'installation_marker', 'parent_stat', 'ancestor_symlinks', 'acl_summary',
@@ -30,6 +30,7 @@ final class SshEnvironmentCollector
         ?\DateTimeImmutable $observedAt = null,
     ): array {
         $observedAt ??= new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        OpenSshReadOnlyTransport::assertSupportedInstallRoot($config);
         $session = $this->transport->collect($config);
         if (($session['host_key_fingerprint'] ?? null) !== $config->all()['target']['ssh_host_fingerprint']) {
             throw new DeploymentException('ssh_host_key_mismatch', 'SSH 主机指纹与部署配置不一致。');
@@ -97,6 +98,8 @@ final class SshEnvironmentCollector
             ],
             'filesystem' => [
                 'target_path' => $config->installRoot(),
+                'checked_install_root' => $output($probes, 'probe_install_root'),
+                'probe_scope_version' => $output($probes, 'probe_scope_version'),
                 'target_state' => $targetState,
                 'installation_marker' => $installationMarker,
                 'parent_stat' => $this->bounded($output($probes, 'parent_stat')),
@@ -160,6 +163,9 @@ final class SshEnvironmentCollector
             'errors' => $errors,
             'command_policy' => [
                 'id' => OpenSshReadOnlyTransport::POLICY_ID,
+                'protocol_version' => OpenSshReadOnlyTransport::PROTOCOL_VERSION,
+                'probe_scope_version' => OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION,
+                'checked_install_root' => OpenSshReadOnlyTransport::FIXED_INSTALL_ROOT,
                 'probe_count' => count(self::REQUIRED_PROBES),
                 'arbitrary_commands_allowed' => false,
             ],
@@ -177,6 +183,8 @@ final class SshEnvironmentCollector
         $expected = [
             'protocol_version' => OpenSshReadOnlyTransport::PROTOCOL_VERSION,
             'command_policy_id' => OpenSshReadOnlyTransport::POLICY_ID,
+            'probe_scope_version' => OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION,
+            'probe_install_root' => OpenSshReadOnlyTransport::FIXED_INSTALL_ROOT,
             'write_operations_performed' => 'false',
         ];
         foreach ($expected as $name => $value) {

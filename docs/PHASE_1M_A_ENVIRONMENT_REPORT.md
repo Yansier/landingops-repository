@@ -36,6 +36,8 @@
 
 Phase 1M-A.1 已在本地完成 v2 forced-command、root-owned wrapper/probe 模板、Windows Ed25519 工具及认证边界审计，但按授权未创建账号、未安装文件、未生成摘要、未连接服务器，因此不改变本报告的真实环境结论。
 
+Phase 1M-A.1.1 又完成固定 `/srv/landingops` probe scope、真实来源上下文审计和隔离 OpenSSH 测试工具；当前因 Docker/WSL/Windows sshd 均不可用，真实 OpenSSH 行为测试明确 SKIP，仍不改变本报告的真实环境结论。
+
 ## 模拟验收结论
 
 模拟 Transport 已覆盖：错误指纹、错误目标、root/非 root、目录缺失/重叠、祖先链接、扩展缺失、Nginx 未知、磁盘不足、数据库身份不一致、过期/篡改证据、超时/部分失败、协议不匹配、命令注入、SCP/SFTP/TTY/转发边界、权限隔离及零写入。

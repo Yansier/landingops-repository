@@ -13,6 +13,7 @@ final class RemoteEvidenceValidator
     /** @param array<string,mixed> $evidence @return array<string,mixed> */
     public function validate(array $evidence, DeploymentConfig $config, string $key, ?\DateTimeImmutable $now = null): array
     {
+        OpenSshReadOnlyTransport::assertSupportedInstallRoot($config);
         if (($evidence['schema_version'] ?? null) !== 'landingops-remote-evidence/1.0'
             || ($evidence['source'] ?? null) !== 'trusted_ssh_readonly_collector'
             || ($evidence['trust_level'] ?? null) !== 'verified_read_only_session'
@@ -27,6 +28,9 @@ final class RemoteEvidenceValidator
             || !is_array($evidence['capabilities'] ?? null)
             || !is_array($evidence['errors'] ?? null)
             || ($evidence['command_policy']['id'] ?? null) !== OpenSshReadOnlyTransport::POLICY_ID
+            || ($evidence['command_policy']['protocol_version'] ?? null) !== OpenSshReadOnlyTransport::PROTOCOL_VERSION
+            || ($evidence['command_policy']['probe_scope_version'] ?? null) !== OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION
+            || ($evidence['command_policy']['checked_install_root'] ?? null) !== OpenSshReadOnlyTransport::FIXED_INSTALL_ROOT
             || ($evidence['command_policy']['arbitrary_commands_allowed'] ?? null) !== false) {
             throw new DeploymentException('remote_evidence_contract_invalid', '远端只读证据契约无效。');
         }
@@ -46,6 +50,11 @@ final class RemoteEvidenceValidator
         }
         if (($evidence['facts']['database']['configured_name'] ?? null) !== $config->all()['database']['name']) {
             throw new DeploymentException('remote_evidence_database_mismatch', '远端证据中的数据库规划身份与当前配置不一致。');
+        }
+        if (($evidence['facts']['filesystem']['target_path'] ?? null) !== $config->installRoot()
+            || ($evidence['facts']['filesystem']['checked_install_root'] ?? null) !== $config->installRoot()
+            || ($evidence['facts']['filesystem']['probe_scope_version'] ?? null) !== OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION) {
+            throw new DeploymentException('remote_evidence_probe_scope_mismatch', '远端证据检查路径或固定探针范围与当前配置不一致。');
         }
         try {
             $observedAt = new \DateTimeImmutable((string) ($evidence['observed_at'] ?? ''));
