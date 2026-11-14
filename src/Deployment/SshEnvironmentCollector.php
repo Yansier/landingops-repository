@@ -6,10 +6,12 @@ namespace LandingOps\Deployment;
 
 final class SshEnvironmentCollector
 {
-    public const VERSION = 'phase-1m-a1.1/2.1';
+    public const VERSION = 'phase-1m-a2/3.0';
     private const REQUIRED_PROBES = [
         'protocol_version', 'command_policy_id', 'probe_scope_version', 'probe_install_root', 'write_operations_performed',
-        'identity_user', 'identity_uid', 'identity_gid', 'identity_group', 'os_release', 'architecture',
+        'identity_user', 'identity_uid', 'identity_gid', 'identity_group',
+        'ssh_source_address', 'ssh_source_port', 'ssh_local_address', 'ssh_local_port', 'ssh_source_context_hash',
+        'os_release', 'architecture',
         'php_version', 'php_extensions', 'php_fpm_versions', 'php_runtime_matrix', 'nginx_version', 'nginx_vhost_capability',
         'disk', 'filesystem', 'target_state', 'installation_marker', 'parent_stat', 'ancestor_symlinks', 'acl_summary',
         'site_roots', 'site_config_count', 'site_root_declaration_count', 'site_non_absolute_root_count',
@@ -56,6 +58,21 @@ final class SshEnvironmentCollector
         $user = $output($probes, 'identity_user');
         $uid = $this->integer($output($probes, 'identity_uid'));
         $gid = $this->integer($output($probes, 'identity_gid'));
+        $sourceAddress = $output($probes, 'ssh_source_address');
+        $sourcePort = $this->integer($output($probes, 'ssh_source_port'));
+        $localAddress = $output($probes, 'ssh_local_address');
+        $localPort = $this->integer($output($probes, 'ssh_local_port'));
+        $sourceContextHash = $output($probes, 'ssh_source_context_hash');
+        $sourceContextVerified = is_string($sourceAddress) && filter_var($sourceAddress, FILTER_VALIDATE_IP) !== false
+            && !in_array($sourceAddress, ['127.0.0.1', '::1', '0.0.0.0', '::'], true)
+            && is_int($sourcePort) && $sourcePort >= 1 && $sourcePort <= 65535
+            && is_string($localAddress) && filter_var($localAddress, FILTER_VALIDATE_IP) !== false
+            && !in_array($localAddress, ['0.0.0.0', '::'], true)
+            && is_int($localPort) && $localPort >= 1 && $localPort <= 65535
+            && is_string($sourceContextHash) && preg_match('/^[a-f0-9]{64}$/D', $sourceContextHash) === 1
+            && hash_equals($sourceContextHash, hash('sha256', implode('|', [
+                $sourceAddress, (string) $sourcePort, $localAddress, (string) $localPort,
+            ])));
         $siteRoots = $this->absoluteLines($output($probes, 'site_roots'));
         $siteConfigCount = $this->integer($output($probes, 'site_config_count'));
         $siteDeclarationCount = $this->integer($output($probes, 'site_root_declaration_count'));
@@ -82,6 +99,15 @@ final class SshEnvironmentCollector
                 'group' => $output($probes, 'identity_group'),
                 'configured_user_matches' => $identityMatches,
                 'is_root' => $uid === 0 || $user === 'root',
+            ],
+            'ssh_session' => [
+                'source_policy' => 'session_observed',
+                'source_address' => $sourceAddress,
+                'source_port' => $sourcePort,
+                'local_address' => $localAddress,
+                'local_port' => $localPort,
+                'context_hash' => $sourceContextHash,
+                'verified' => $sourceContextVerified,
             ],
             'system' => [
                 'os_release' => $this->parseOsRelease($output($probes, 'os_release')),
@@ -127,6 +153,7 @@ final class SshEnvironmentCollector
         ];
         $blockers = [];
         if (!$identityMatches || $facts['identity']['is_root']) { $blockers[] = 'dedicated_non_root_identity_unverified'; }
+        if (!$sourceContextVerified) { $blockers[] = 'ssh_session_context_unverified'; }
         if (!$targetStateSafe) { $blockers[] = 'target_directory_state_unsafe'; }
         if ($missingExtensions !== []) { $blockers[] = 'php_extensions_missing'; }
         if (($disk['available_bytes'] ?? 0) < 1073741824) { $blockers[] = 'disk_space_insufficient'; }
@@ -148,6 +175,7 @@ final class SshEnvironmentCollector
                 'configured_user' => $configured['target']['ssh_user'], 'observed_user' => $user,
                 'uid' => $uid, 'gid' => $gid,
                 'host_key_fingerprint' => $session['host_key_fingerprint'], 'host_key_verified' => true,
+                'host_key_verification_source' => $session['host_key_verification_source'] ?? 'mock_or_legacy_session',
                 'session_id' => is_string($session['session_id'] ?? null) ? $session['session_id'] : '',
             ],
             'facts' => $facts,

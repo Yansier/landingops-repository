@@ -12,13 +12,21 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
     public const PROBE_SCOPE_VERSION = 'landingops-install-scope/1';
     public const FIXED_INSTALL_ROOT = '/srv/landingops';
     private const MAX_OUTPUT_BYTES = 1048576;
+    private readonly \Closure $runner;
 
     public function __construct(
         private readonly string $sshBinary = 'ssh',
         private readonly string $sshKeyscanBinary = 'ssh-keyscan',
-        private readonly string $sshKeygenBinary = 'ssh-keygen',
         private readonly int $timeoutSeconds = 30,
+        private readonly int $hostKeyScanAttempts = 3,
+        private readonly int $hostKeyScanRetryDelayMilliseconds = 150,
+        ?\Closure $runner = null,
     ) {
+        if ($hostKeyScanAttempts < 1 || $hostKeyScanAttempts > 5
+            || $hostKeyScanRetryDelayMilliseconds < 0 || $hostKeyScanRetryDelayMilliseconds > 1000) {
+            throw new \InvalidArgumentException('SSH host-key retry policy is outside the bounded range.');
+        }
+        $this->runner = $runner ?? fn (array $command, ?string $stdin, int $timeout): array => $this->runProcess($command, $stdin, $timeout);
     }
 
     public function collect(DeploymentConfig $config): array
@@ -28,14 +36,12 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         $host = (string) $target['ssh_host'];
         $port = (int) $target['ssh_port'];
         $expectedFingerprint = (string) $target['ssh_host_fingerprint'];
-        $scan = $this->run([$this->sshKeyscanBinary, '-T', '7', '-p', (string) $port, $host], null, 10);
-        if ($scan['timed_out'] || $scan['exit_code'] !== 0 || trim($scan['stdout']) === '') {
-            throw new DeploymentException('ssh_host_key_scan_failed', '无法读取 SSH 主机公钥；未建立远端会话。');
-        }
-        $matched = $this->matchingHostKey($scan['stdout'], $expectedFingerprint);
-        if ($matched === null) {
-            throw new DeploymentException('ssh_host_key_mismatch', 'SSH 主机公钥指纹与配置不一致；未建立远端会话。');
-        }
+        $matched = $this->resolveHostKey(
+            $host,
+            $port,
+            $expectedFingerprint,
+            (string) $target['ssh_host_public_key'],
+        );
         $knownHosts = tempnam(sys_get_temp_dir(), 'landingops-known-host-');
         if (!is_string($knownHosts)) {
             throw new DeploymentException('ssh_known_hosts_failed', '无法建立临时 SSH 主机公钥文件。');
@@ -84,6 +90,7 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
             $this->validateHandshake($probes);
             return [
                 'host_key_fingerprint' => $expectedFingerprint,
+                'host_key_verification_source' => $matched['source'],
                 'session_id' => bin2hex(random_bytes(16)),
                 'probes' => $probes,
             ];
@@ -101,28 +108,55 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         }
     }
 
+    /** @return array{line:string,type:string,source:string} */
+    private function resolveHostKey(string $host, int $port, string $expected, string $pinnedPublicKey): array
+    {
+        for ($attempt = 1; $attempt <= $this->hostKeyScanAttempts; $attempt++) {
+            $scan = $this->run([$this->sshKeyscanBinary, '-T', '7', '-p', (string) $port, $host], null, 10);
+            if (!$scan['timed_out'] && $scan['exit_code'] === 0 && trim($scan['stdout']) !== '') {
+                $matched = $this->matchingHostKey($scan['stdout'], $expected);
+                if ($matched === null) {
+                    throw new DeploymentException('ssh_host_key_mismatch', 'SSH 扫描返回了与管理员固定指纹不一致的主机公钥；未建立远端会话。');
+                }
+                return $matched + ['source' => 'live_scan_plus_strict_known_hosts'];
+            }
+            if ($attempt < $this->hostKeyScanAttempts && $this->hostKeyScanRetryDelayMilliseconds > 0) {
+                usleep($this->hostKeyScanRetryDelayMilliseconds * 1000);
+            }
+        }
+
+        $parts = explode(' ', $pinnedPublicKey, 2);
+        if (count($parts) !== 2 || !hash_equals('ssh-ed25519', $parts[0])
+            || !hash_equals(rtrim($expected, '='), $this->fingerprint($parts[1]))) {
+            throw new DeploymentException('ssh_host_key_pin_mismatch', '管理员固定的 SSH 公钥与预期 SHA-256 指纹不一致；未建立远端会话。');
+        }
+        $hostToken = $port === 22 ? $host : '[' . $host . ']:' . $port;
+        return [
+            'line' => $hostToken . ' ' . $pinnedPublicKey,
+            'type' => $parts[0],
+            'source' => 'administrator_pinned_key_plus_strict_known_hosts',
+        ];
+    }
+
     /** @return array{line:string,type:string}|null */
     private function matchingHostKey(string $scan, string $expected): ?array
     {
         foreach (preg_split('/\R/', trim($scan)) ?: [] as $line) {
             $parts = preg_split('/\s+/', trim($line));
-            if (!is_array($parts) || count($parts) < 3 || !str_starts_with((string) $parts[1], 'ssh-')) {
+            if (!is_array($parts) || count($parts) < 3 || !hash_equals('ssh-ed25519', (string) $parts[1])) {
                 continue;
             }
-            $path = tempnam(sys_get_temp_dir(), 'landingops-host-key-');
-            if (!is_string($path)) { continue; }
-            try {
-                file_put_contents($path, $line . "\n", LOCK_EX);
-                $fingerprint = $this->run([$this->sshKeygenBinary, '-lf', $path, '-E', 'sha256'], null, 5);
-                if (!$fingerprint['timed_out'] && preg_match('/\b(SHA256:[A-Za-z0-9+\/=]+)\b/', $fingerprint['stdout'], $match) === 1
-                    && hash_equals($expected, $match[1])) {
-                    return ['line' => $line, 'type' => (string) $parts[1]];
-                }
-            } finally {
-                @unlink($path);
+            if (hash_equals(rtrim($expected, '='), $this->fingerprint((string) $parts[2]))) {
+                return ['line' => $line, 'type' => (string) $parts[1]];
             }
         }
         return null;
+    }
+
+    private function fingerprint(string $encodedBlob): string
+    {
+        $blob = base64_decode($encodedBlob, true);
+        return is_string($blob) ? 'SHA256:' . rtrim(base64_encode(hash('sha256', $blob, true)), '=') : '';
     }
 
     /** @return array<string,array{exit_code:int,stdout:string,timed_out:bool}> */
@@ -167,6 +201,12 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
 
     /** @param list<string> $command @return array{exit_code:int,stdout:string,timed_out:bool} */
     private function run(array $command, ?string $stdin, int $timeout): array
+    {
+        return ($this->runner)($command, $stdin, $timeout);
+    }
+
+    /** @param list<string> $command @return array{exit_code:int,stdout:string,timed_out:bool} */
+    private function runProcess(array $command, ?string $stdin, int $timeout): array
     {
         $pipes = [];
         $process = proc_open($command, [

@@ -25,6 +25,7 @@ final class RemoteEvidenceValidator
             || ($evidence['write_operations_performed'] ?? null) !== false
             || !is_array($evidence['target'] ?? null)
             || !is_array($evidence['facts'] ?? null)
+            || !is_array($evidence['facts']['ssh_session'] ?? null)
             || !is_array($evidence['capabilities'] ?? null)
             || !is_array($evidence['errors'] ?? null)
             || ($evidence['command_policy']['id'] ?? null) !== OpenSshReadOnlyTransport::POLICY_ID
@@ -44,9 +45,32 @@ final class RemoteEvidenceValidator
             || ($target['configured_user'] ?? null) !== $configured['ssh_user']
             || ($target['host_key_fingerprint'] ?? null) !== $configured['ssh_host_fingerprint']
             || ($target['host_key_verified'] ?? null) !== true
+            || !in_array($target['host_key_verification_source'] ?? null, [
+                'live_scan_plus_strict_known_hosts',
+                'administrator_pinned_key_plus_strict_known_hosts',
+            ], true)
             || !is_string($target['session_id'] ?? null)
             || preg_match('/^[a-f0-9]{32}$/D', $target['session_id']) !== 1) {
             throw new DeploymentException('remote_evidence_target_mismatch', '远端证据未绑定当前 SSH 目标身份。');
+        }
+        $sshSession = $evidence['facts']['ssh_session'];
+        if (($sshSession['source_policy'] ?? null) !== 'session_observed'
+            || ($sshSession['verified'] ?? null) !== true
+            || !is_string($sshSession['source_address'] ?? null)
+            || filter_var($sshSession['source_address'], FILTER_VALIDATE_IP) === false
+            || !is_int($sshSession['source_port'] ?? null)
+            || $sshSession['source_port'] < 1 || $sshSession['source_port'] > 65535
+            || !is_string($sshSession['local_address'] ?? null)
+            || filter_var($sshSession['local_address'], FILTER_VALIDATE_IP) === false
+            || !is_int($sshSession['local_port'] ?? null)
+            || $sshSession['local_port'] < 1 || $sshSession['local_port'] > 65535
+            || !is_string($sshSession['context_hash'] ?? null)
+            || preg_match('/^[a-f0-9]{64}$/D', $sshSession['context_hash']) !== 1
+            || !hash_equals($sshSession['context_hash'], hash('sha256', implode('|', [
+                $sshSession['source_address'], (string) $sshSession['source_port'],
+                $sshSession['local_address'], (string) $sshSession['local_port'],
+            ])))) {
+            throw new DeploymentException('remote_evidence_ssh_session_invalid', '远端证据未绑定服务器实际观察到的 SSH 会话来源。');
         }
         if (($evidence['facts']['database']['configured_name'] ?? null) !== $config->all()['database']['name']) {
             throw new DeploymentException('remote_evidence_database_mismatch', '远端证据中的数据库规划身份与当前配置不一致。');

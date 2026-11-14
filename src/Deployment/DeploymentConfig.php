@@ -45,7 +45,8 @@ final class DeploymentConfig
 
         $target = self::object($data, 'target', '$');
         self::exactKeys($target, [
-            'ssh_host', 'ssh_port', 'ssh_user', 'ssh_host_fingerprint', 'baota_https_origin', 'expected_baota_version',
+            'ssh_host', 'ssh_port', 'ssh_user', 'ssh_host_fingerprint', 'ssh_host_public_key',
+            'baota_https_origin', 'expected_baota_version',
         ], '$.target');
         $host = self::string($target, 'ssh_host', '$.target');
         if (str_contains($host, '://') || preg_match('/\s/', $host) === 1
@@ -62,6 +63,13 @@ final class DeploymentConfig
             throw new DeploymentException('ssh_user_unsafe', '必须使用非 root 专用部署账号。');
         }
         self::pattern($target, 'ssh_host_fingerprint', '/^SHA256:[A-Za-z0-9+\/=]{20,100}$/D', '$.target');
+        self::pattern($target, 'ssh_host_public_key', '/^ssh-ed25519 [A-Za-z0-9+\/]+={0,2}$/D', '$.target');
+        if (!hash_equals(
+            rtrim((string) $target['ssh_host_fingerprint'], '='),
+            self::sshPublicKeyFingerprint((string) $target['ssh_host_public_key']),
+        )) {
+            throw new DeploymentException('ssh_host_key_pin_mismatch', 'SSH 固定公钥与 SHA-256 指纹不一致。');
+        }
         self::httpsOrigin($target, 'baota_https_origin', '$.target');
         self::pattern($target, 'expected_baota_version', '/^[0-9]+\.[0-9]+(?:\.[0-9]+)?$/D', '$.target');
 
@@ -320,5 +328,18 @@ final class DeploymentConfig
             }
             self::rejectSensitiveValues($child, $childPath);
         }
+    }
+
+    private static function sshPublicKeyFingerprint(string $publicKey): string
+    {
+        $parts = explode(' ', $publicKey, 2);
+        $blob = isset($parts[1]) ? base64_decode($parts[1], true) : false;
+        if (!is_string($blob) || strlen($blob) !== 51
+            || unpack('Nlength', substr($blob, 0, 4))['length'] !== 11
+            || !hash_equals('ssh-ed25519', substr($blob, 4, 11))
+            || unpack('Nlength', substr($blob, 15, 4))['length'] !== 32) {
+            throw new DeploymentException('ssh_host_key_pin_invalid', 'SSH 固定公钥不是有效 Ed25519 公钥。');
+        }
+        return 'SHA256:' . rtrim(base64_encode(hash('sha256', $blob, true)), '=');
     }
 }

@@ -98,6 +98,7 @@ return [
         foreach ([
             static function (array &$data): void { $data['target']['ssh_user'] = 'root'; },
             static function (array &$data): void { $data['target']['ssh_host'] = 'https://attacker.invalid'; },
+            static function (array &$data): void { $data['target']['ssh_host_fingerprint'] = 'SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'; },
             static function (array &$data): void { $data['paths']['staging_dir'] = '/srv/landingops/../other'; },
             static function (array &$data): void { $data['database']['name'] = 'landingops_test'; },
             static function (array &$data): void { $data['database']['password'] = 'must-not-exist'; },

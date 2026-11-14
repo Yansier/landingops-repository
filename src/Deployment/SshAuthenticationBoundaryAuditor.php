@@ -28,6 +28,7 @@ final class SshAuthenticationBoundaryAuditor
         }
         $context = $facts['source_context'] ?? null;
         if (!is_array($context) || ($context['verified'] ?? null) !== true
+            || ($context['policy'] ?? null) !== 'session_observed'
             || !is_string($context['address'] ?? null) || filter_var($context['address'], FILTER_VALIDATE_IP) === false
             || str_starts_with($context['address'], '127.') || $context['address'] === '::1'
             || !is_string($context['host'] ?? null) || preg_match('/^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/D', $context['host']) !== 1
@@ -61,10 +62,19 @@ final class SshAuthenticationBoundaryAuditor
             'authorizedkeysfile' => '.ssh/authorized_keys',
             'authorizedkeyscommand' => 'none',
             'trustedusercakeys' => 'none',
-            'forcecommand' => 'none',
+            'authorizedprincipalsfile' => 'none',
+            'forcecommand' => self::WRAPPER,
             'permituserenvironment' => 'no',
             'hostbasedauthentication' => 'no',
             'gssapiauthentication' => 'no',
+            'disableforwarding' => 'yes',
+            'allowagentforwarding' => 'no',
+            'allowtcpforwarding' => 'no',
+            'allowstreamlocalforwarding' => 'no',
+            'x11forwarding' => 'no',
+            'permittty' => 'no',
+            'permituserrc' => 'no',
+            'permittunnel' => 'no',
         ];
         if (!is_array($effective)) {
             $violations[] = 'effective_sshd_policy_unverified';

@@ -48,7 +48,8 @@ function phase1mSession(): array
         $siteRoots[] = '/www/wwwroot/external-site-' . $index;
     }
     return [
-        'host_key_fingerprint' => 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        'host_key_fingerprint' => 'SHA256:mKqU+0K8OhKmA8bBQi9Rz0Q5l7/g160hIP+rJYSTNj4',
+        'host_key_verification_source' => 'administrator_pinned_key_plus_strict_known_hosts',
         'session_id' => str_repeat('a', 32),
         'probes' => [
             'protocol_version' => phase1mProbe(OpenSshReadOnlyTransport::PROTOCOL_VERSION),
@@ -60,6 +61,11 @@ function phase1mSession(): array
             'identity_uid' => phase1mProbe('1201'),
             'identity_gid' => phase1mProbe('1201'),
             'identity_group' => phase1mProbe('landingops-audit'),
+            'ssh_source_address' => phase1mProbe('198.51.100.20'),
+            'ssh_source_port' => phase1mProbe('55000'),
+            'ssh_local_address' => phase1mProbe('192.0.2.10'),
+            'ssh_local_port' => phase1mProbe('22'),
+            'ssh_source_context_hash' => phase1mProbe('f3a1047d5c6bda053b8fee120bf38c1f0578cfd2da5ba195b83d65ed7a72f690'),
             'os_release' => phase1mProbe("ID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.3 LTS\""),
             'architecture' => phase1mProbe('x86_64'),
             'php_version' => phase1mProbe('PHP 8.3.14 (cli)'),
@@ -114,6 +120,86 @@ return [
         TestHarness::assertNotContains('probeScript', $source);
     },
 
+    'host key scan retries are bounded and a later verified scan is accepted' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1mConfigData());
+        $target = $config->all()['target'];
+        $scanCalls = 0;
+        $protocol = '';
+        foreach ([
+            'protocol_version' => OpenSshReadOnlyTransport::PROTOCOL_VERSION,
+            'command_policy_id' => OpenSshReadOnlyTransport::POLICY_ID,
+            'probe_scope_version' => OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION,
+            'probe_install_root' => OpenSshReadOnlyTransport::FIXED_INSTALL_ROOT,
+            'write_operations_performed' => 'false',
+        ] as $name => $value) {
+            $protocol .= "LO1\t{$name}\t0\t" . base64_encode($value) . "\n";
+        }
+        $runner = static function (array $command, ?string $stdin, int $timeout) use (&$scanCalls, $target, $protocol): array {
+            TestHarness::assertSame(null, $stdin);
+            if ($command[0] === 'fake-keyscan') {
+                $scanCalls++;
+                if ($scanCalls < 3) {
+                    return ['exit_code' => 1, 'stdout' => '', 'timed_out' => $scanCalls === 1];
+                }
+                return ['exit_code' => 0, 'stdout' => $target['ssh_host'] . ' ' . $target['ssh_host_public_key'] . "\n", 'timed_out' => false];
+            }
+            TestHarness::assertSame('fake-ssh', $command[0]);
+            return ['exit_code' => 0, 'stdout' => $protocol, 'timed_out' => false];
+        };
+        $session = (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config);
+        TestHarness::assertSame(3, $scanCalls);
+        TestHarness::assertSame('live_scan_plus_strict_known_hosts', $session['host_key_verification_source']);
+    },
+
+    'administrator pinned host key is used only after bounded empty scans and remains strict' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1mConfigData());
+        $target = $config->all()['target'];
+        $scanCalls = 0;
+        $knownHosts = '';
+        $protocol = '';
+        foreach ([
+            'protocol_version' => OpenSshReadOnlyTransport::PROTOCOL_VERSION,
+            'command_policy_id' => OpenSshReadOnlyTransport::POLICY_ID,
+            'probe_scope_version' => OpenSshReadOnlyTransport::PROBE_SCOPE_VERSION,
+            'probe_install_root' => OpenSshReadOnlyTransport::FIXED_INSTALL_ROOT,
+            'write_operations_performed' => 'false',
+        ] as $name => $value) {
+            $protocol .= "LO1\t{$name}\t0\t" . base64_encode($value) . "\n";
+        }
+        $runner = static function (array $command, ?string $stdin, int $timeout) use (&$scanCalls, &$knownHosts, $protocol): array {
+            if ($command[0] === 'fake-keyscan') {
+                $scanCalls++;
+                return ['exit_code' => 1, 'stdout' => '', 'timed_out' => false];
+            }
+            foreach ($command as $argument) {
+                if (str_starts_with($argument, 'UserKnownHostsFile=')) {
+                    $knownHosts = (string) file_get_contents(substr($argument, strlen('UserKnownHostsFile=')));
+                }
+            }
+            TestHarness::assertTrue(in_array('StrictHostKeyChecking=yes', $command, true));
+            TestHarness::assertFalse(in_array('StrictHostKeyChecking=no', $command, true));
+            return ['exit_code' => 0, 'stdout' => $protocol, 'timed_out' => false];
+        };
+        $session = (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config);
+        TestHarness::assertSame(3, $scanCalls);
+        TestHarness::assertContains($target['ssh_host_public_key'], $knownHosts);
+        TestHarness::assertSame('administrator_pinned_key_plus_strict_known_hosts', $session['host_key_verification_source']);
+    },
+
+    'a nonempty mismatched host key scan fails closed without pinned fallback' => static function (): void {
+        $config = DeploymentConfig::fromArray(phase1mConfigData());
+        $scanCalls = 0;
+        $runner = static function (array $command, ?string $stdin, int $timeout) use (&$scanCalls): array {
+            $scanCalls++;
+            return ['exit_code' => 0, 'stdout' => '192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFJvbmdIb3N0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5MA==', 'timed_out' => false];
+        };
+        TestHarness::assertSame('ssh_host_key_mismatch', TestHarness::assertThrows(
+            static fn () => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config),
+            DeploymentException::class,
+        )->errorCode);
+        TestHarness::assertSame(1, $scanCalls);
+    },
+
     'forced command policy rejects injection scp sftp tty and protocol variants' => static function (): void {
         $policy = new ForcedCommandPolicy();
         TestHarness::assertTrue($policy->authorize('landingops-readonly collect v2'));
@@ -165,7 +251,7 @@ return [
             'user' => 'landingops-audit', 'uid' => 1201, 'gid' => 1201,
             'groups' => ['landingops-audit'], 'password_locked' => true,
             'shell' => '/usr/local/libexec/landingops-readonly-wrapper',
-            'source_context' => ['verified' => true, 'address' => '198.51.100.20', 'host' => 'operator.example.invalid', 'local_address' => '192.0.2.10', 'local_port' => 22],
+            'source_context' => ['verified' => true, 'policy' => 'session_observed', 'address' => '198.51.100.20', 'host' => '198.51.100.20', 'local_address' => '192.0.2.10', 'local_port' => 22],
             'authorized_key_entry_count' => 1,
             'authorized_key_line' => 'restrict,command="/usr/local/libexec/landingops-readonly-wrapper" ssh-ed25519 ' . $key . ' landingops-audit@landingops',
             'home' => ['owner' => 'root', 'group' => 'root', 'mode' => '755'],
@@ -177,8 +263,12 @@ return [
                 'passwordauthentication' => 'no', 'kbdinteractiveauthentication' => 'no',
                 'pubkeyauthentication' => 'yes', 'authenticationmethods' => 'publickey',
                 'authorizedkeysfile' => '.ssh/authorized_keys', 'authorizedkeyscommand' => 'none',
-                'trustedusercakeys' => 'none', 'forcecommand' => 'none', 'permituserenvironment' => 'no',
+                'trustedusercakeys' => 'none', 'authorizedprincipalsfile' => 'none',
+                'forcecommand' => '/usr/local/libexec/landingops-readonly-wrapper', 'permituserenvironment' => 'no',
                 'hostbasedauthentication' => 'no', 'gssapiauthentication' => 'no',
+                'disableforwarding' => 'yes', 'allowagentforwarding' => 'no', 'allowtcpforwarding' => 'no',
+                'allowstreamlocalforwarding' => 'no', 'x11forwarding' => 'no', 'permittty' => 'no',
+                'permituserrc' => 'no', 'permittunnel' => 'no',
             ],
         ];
         $auditor = new SshAuthenticationBoundaryAuditor();
@@ -217,11 +307,14 @@ return [
         TestHarness::assertContains('laddr=$local_address', $audit);
         TestHarness::assertContains('lport=$local_port', $audit);
         TestHarness::assertContains('set -- ${SSH_CONNECTION-}', $audit);
-        TestHarness::assertContains('getent ahosts "$source_host"', $audit);
+        TestHarness::assertContains('source_policy=session-observed', $audit);
+        TestHarness::assertNotContains('getent ahosts "$source_host"', $audit);
         TestHarness::assertNotContains('addr=127.0.0.1', $audit);
         TestHarness::assertContains("CONTEXT='/etc/landingops/ssh-audit-context.conf'", $audit);
         TestHarness::assertContains('[ "$authentication_methods" = publickey ]', $audit);
         TestHarness::assertContains('[ "$authorized_keys_file" = \'.ssh/authorized_keys\' ]', $audit);
+        TestHarness::assertContains('[ "$force_command" = "$WRAPPER" ]', $audit);
+        TestHarness::assertContains('[ "$disable_forwarding" = yes ]', $audit);
         TestHarness::assertContains('$1=""; sub(/^ /,"")', $audit);
         TestHarness::assertContains('boundary_safe=', $audit);
         TestHarness::assertContains('exit 81', $audit);
@@ -229,6 +322,25 @@ return [
         foreach (['useradd ', 'usermod ', 'passwd -l', 'chmod ', 'chown ', 'sed -i', 'systemctl '] as $forbidden) {
             TestHarness::assertNotContains($forbidden, $audit);
         }
+    },
+
+    'dedicated ssh match policy is account scoped publickey only and source independent' => static function (): void {
+        $policy = (string) file_get_contents(dirname(__DIR__) . '/deploy/ssh/00-landingops-audit.conf');
+        TestHarness::assertContains('Match User landingops-audit', $policy);
+        foreach ([
+            'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'PubkeyAuthentication yes',
+            'AuthenticationMethods publickey', 'AuthorizedKeysFile .ssh/authorized_keys',
+            'AuthorizedKeysCommand none', 'TrustedUserCAKeys none', 'AuthorizedPrincipalsFile none',
+            'DisableForwarding yes', 'AllowAgentForwarding no', 'AllowTcpForwarding no',
+            'AllowStreamLocalForwarding no', 'X11Forwarding no', 'PermitTTY no',
+            'PermitUserRC no', 'PermitTunnel no',
+            'ForceCommand /usr/local/libexec/landingops-readonly-wrapper',
+        ] as $directive) {
+            TestHarness::assertContains($directive, $policy);
+        }
+        TestHarness::assertNotContains('Match Address', $policy);
+        TestHarness::assertNotContains('49.125.', $policy);
+        TestHarness::assertNotContains('PermitRootLogin', $policy);
     },
 
     'isolated openssh harness covers real protocol behavior without production targets' => static function (): void {
@@ -246,10 +358,10 @@ return [
 
     'server runbook has stop rollback source context and fixed scope gates' => static function (): void {
         $runbook = (string) file_get_contents(dirname(__DIR__) . '/docs/PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md');
-        foreach (['/srv/landingops', 'SSH_CONNECTION', 'ssh-audit-context.conf', 'boundary_safe=true', 'PasswordAuthentication no', '停止条件', '分步回退', 'collect / verify / plan', 'real_execution_enabled=false'] as $required) {
+        foreach (['/srv/landingops', 'SSH_CONNECTION', 'session-observed', 'boundary_safe=true', 'PasswordAuthentication no', '停止条件', '分步回退', 'collect / verify / plan', 'real_execution_enabled=false'] as $required) {
             TestHarness::assertContains($required, $runbook);
         }
-        TestHarness::assertContains('不得在本 Runbook 下修改 `sshd_config`', $runbook);
+        TestHarness::assertContains('不得转而修改全局认证策略', $runbook);
     },
 
     'authentication boundary blocks loopback context alternate auth and extra key sources' => static function (): void {
@@ -257,7 +369,7 @@ return [
         $base = [
             'user' => 'landingops-audit', 'uid' => 1201, 'gid' => 1201, 'groups' => ['landingops-audit'],
             'password_locked' => true, 'shell' => '/usr/local/libexec/landingops-readonly-wrapper',
-            'source_context' => ['verified' => true, 'address' => '127.0.0.1', 'host' => 'localhost', 'local_address' => '192.0.2.10', 'local_port' => 22],
+            'source_context' => ['verified' => true, 'policy' => 'session_observed', 'address' => '127.0.0.1', 'host' => '127.0.0.1', 'local_address' => '192.0.2.10', 'local_port' => 22],
             'authorized_key_entry_count' => 2,
             'authorized_key_line' => 'restrict,command="/usr/local/libexec/landingops-readonly-wrapper" ssh-ed25519 ' . $key . ' landingops-audit@landingops',
             'home' => ['owner' => 'root', 'group' => 'root', 'mode' => '755'],
@@ -306,6 +418,27 @@ return [
         TestHarness::assertFalse($verified['real_execution_enabled']);
         TestHarness::assertFalse($verified['write_operations_performed']);
         TestHarness::assertFalse($verified['command_policy']['arbitrary_commands_allowed']);
+    },
+
+    'dynamic ssh source is signed per session and cannot be relabelled' => static function (): void {
+        $session = phase1mSession();
+        $session['probes']['ssh_source_address'] = phase1mProbe('203.0.113.44');
+        $session['probes']['ssh_source_port'] = phase1mProbe('61000');
+        $session['probes']['ssh_source_context_hash'] = phase1mProbe(hash('sha256', '203.0.113.44|61000|192.0.2.10|22'));
+        $config = DeploymentConfig::fromArray(phase1mConfigData());
+        $evidence = phase1mCollect($session);
+        TestHarness::assertSame('session_observed', $evidence['facts']['ssh_session']['source_policy']);
+        TestHarness::assertSame('203.0.113.44', $evidence['facts']['ssh_session']['source_address']);
+        TestHarness::assertTrue($evidence['facts']['ssh_session']['verified']);
+
+        $evidence['facts']['ssh_session']['source_address'] = '203.0.113.45';
+        $evidence = (new RemoteEvidenceSigner())->sign($evidence, str_repeat('e', 32));
+        TestHarness::assertSame('remote_evidence_ssh_session_invalid', TestHarness::assertThrows(
+            static fn () => (new RemoteEvidenceValidator())->validate(
+                $evidence, $config, str_repeat('e', 32), new \DateTimeImmutable('2026-01-01T00:10:00Z'),
+            ),
+            DeploymentException::class,
+        )->errorCode);
     },
 
     'v2 collector rejects a non fixed install root before transport evidence can be trusted' => static function (): void {

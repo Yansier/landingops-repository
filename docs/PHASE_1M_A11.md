@@ -1,5 +1,7 @@
 # LandingOps Phase 1M-A.1.1：服务器安装前最终兼容性修复
 
+> Phase 1M-A.2 已将固定来源上下文升级为 `session-observed`，并增加账号专用 Match 策略与固定 Host Key 公钥回退。本文件保留历史实现说明；实际安装以 `PHASE_1M_A2.md` 和最新 Runbook 为准。
+
 ## 阶段边界
 
 本轮仅修改本地源码、模拟测试、隔离测试工具和文档。未连接生产服务器，未创建账号/密钥，未安装 wrapper/probe，未读取或修改网站、Nginx、SSH、数据库、DNS 或防火墙。
@@ -25,7 +27,7 @@ probe_install_root=/srv/landingops
 
 ## SSH 认证边界
 
-未来服务器保存 root-owned `0600` 的 `/etc/landingops/ssh-audit-context.conf`，只含 schema、服务器实际观察到的客户端来源 IP、解析后的来源主机名、本地监听地址和端口。审计要求它们与当前 root 审批会话的 `SSH_CONNECTION` 一致，并要求来源主机名正向解析包含该来源 IP；拒绝 loopback/unspecified 来源，然后使用：
+Phase 1M-A.2 后，服务器保存 root-owned `0600` 的 `/etc/landingops/ssh-audit-context.conf`，只声明 schema v2 与 `source_policy=session-observed`。审计从当前 `SSH_CONNECTION` 派生来源和本地端点，拒绝 loopback/unspecified 来源，然后使用：
 
 ```text
 sshd -T -C user=landingops-audit,host=<source_host>,addr=<source_address>,laddr=<local_address>,lport=<local_port>
@@ -38,7 +40,7 @@ sshd -T -C user=landingops-audit,host=<source_host>,addr=<source_address>,laddr=
 - 密码和键盘交互关闭，公钥开启，`AuthenticationMethods=publickey`；
 - 唯一 `AuthorizedKeysFile=.ssh/authorized_keys`；
 - `AuthorizedKeysCommand=none`、`TrustedUserCAKeys=none`；
-- `ForceCommand=none`，forced-command 由唯一公钥和 login shell 双边界实施；
+- `ForceCommand` 固定为 wrapper，forced-command 同时由 Match、唯一公钥和 login shell 实施；
 - `PermitUserEnvironment=no`，Hostbased/GSSAPI 关闭；
 - authorized_keys 仅有一条精确受限 Ed25519 公钥；
 - 账号非 root、无附加组、密码锁定；关键文件均为预期 root owner/mode。

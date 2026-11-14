@@ -27,6 +27,27 @@ identity_user() { /usr/bin/id -un; }
 identity_uid() { /usr/bin/id -u; }
 identity_gid() { /usr/bin/id -g; }
 identity_group() { /usr/bin/id -gn; }
+ssh_connection_field() {
+    position=$1
+    set -- ${SSH_CONNECTION-}
+    [ "$#" -eq 4 ] || return 3
+    case "$position" in
+        1) printf '%s\n' "$1" ;;
+        2) printf '%s\n' "$2" ;;
+        3) printf '%s\n' "$3" ;;
+        4) printf '%s\n' "$4" ;;
+        *) return 3 ;;
+    esac
+}
+ssh_source_address() { ssh_connection_field 1; }
+ssh_source_port() { ssh_connection_field 2; }
+ssh_local_address() { ssh_connection_field 3; }
+ssh_local_port() { ssh_connection_field 4; }
+ssh_source_context_hash() {
+    set -- ${SSH_CONNECTION-}
+    [ "$#" -eq 4 ] || return 3
+    /usr/bin/printf '%s|%s|%s|%s' "$1" "$2" "$3" "$4" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}'
+}
 os_release() { /usr/bin/cat /etc/os-release; }
 architecture() { /usr/bin/uname -m; }
 php_version() {
@@ -152,6 +173,6 @@ emit_value command_policy_id 'landingops-linux-readonly-v2'
 emit_value probe_scope_version 'landingops-install-scope/1'
 emit_value probe_install_root "$INSTALL_ROOT"
 emit_value write_operations_performed 'false'
-for probe in identity_user identity_uid identity_gid identity_group os_release architecture php_version php_extensions php_fpm_versions php_runtime_matrix nginx_version nginx_vhost_capability disk filesystem target_state installation_marker parent_stat ancestor_symlinks acl_summary site_roots site_config_count site_root_declaration_count site_non_absolute_root_count site_unreadable_count site_symlink_count database_client database_server_binary database_runtime_binary baota_version; do
+for probe in identity_user identity_uid identity_gid identity_group ssh_source_address ssh_source_port ssh_local_address ssh_local_port ssh_source_context_hash os_release architecture php_version php_extensions php_fpm_versions php_runtime_matrix nginx_version nginx_vhost_capability disk filesystem target_state installation_marker parent_stat ancestor_symlinks acl_summary site_roots site_config_count site_root_declaration_count site_non_absolute_root_count site_unreadable_count site_symlink_count database_client database_server_binary database_runtime_binary baota_version; do
     emit_function "$probe" "$probe"
 done

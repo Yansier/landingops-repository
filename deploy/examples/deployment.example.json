@@ -6,7 +6,8 @@
     "ssh_host": "192.0.2.10",
     "ssh_port": 22,
     "ssh_user": "landingops-audit",
-    "ssh_host_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "ssh_host_fingerprint": "SHA256:mKqU+0K8OhKmA8bBQi9Rz0Q5l7/g160hIP+rJYSTNj4",
+    "ssh_host_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g",
     "baota_https_origin": "https://panel.example.invalid:8888",
     "expected_baota_version": "8.0.7"
   },

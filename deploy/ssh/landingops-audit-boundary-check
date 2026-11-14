@@ -22,27 +22,23 @@ context_boundary=false
 check_file "$CONTEXT" root root 600 'regular file' && context_boundary=true
 [ "$context_boundary" = true ] || exit 78
 context_lines=$(/usr/bin/awk 'NF {count++} END {print count+0}' "$CONTEXT")
-context_unknown=$(/usr/bin/awk -F= 'NF && $1!="schema_version" && $1!="source_address" && $1!="source_host" && $1!="local_address" && $1!="local_port" {count++} END {print count+0}' "$CONTEXT")
-schema_count=$(/usr/bin/grep -c '^schema_version=landingops-ssh-audit-context/1$' "$CONTEXT" || true)
-source_count=$(/usr/bin/grep -c '^source_address=' "$CONTEXT" || true)
-host_count=$(/usr/bin/grep -c '^source_host=' "$CONTEXT" || true)
-local_address_count=$(/usr/bin/grep -c '^local_address=' "$CONTEXT" || true)
-local_port_count=$(/usr/bin/grep -c '^local_port=' "$CONTEXT" || true)
-[ "$context_lines" -eq 5 ] && [ "$context_unknown" -eq 0 ] && [ "$schema_count" -eq 1 ] && [ "$source_count" -eq 1 ] && [ "$host_count" -eq 1 ] && [ "$local_address_count" -eq 1 ] && [ "$local_port_count" -eq 1 ] || exit 78
-source_address=$(/usr/bin/awk -F= '$1=="source_address" {print substr($0,length($1)+2)}' "$CONTEXT")
-source_host=$(/usr/bin/awk -F= '$1=="source_host" {print substr($0,length($1)+2)}' "$CONTEXT")
-local_address=$(/usr/bin/awk -F= '$1=="local_address" {print substr($0,length($1)+2)}' "$CONTEXT")
-local_port=$(/usr/bin/awk -F= '$1=="local_port" {print substr($0,length($1)+2)}' "$CONTEXT")
-/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_loopback and not value.is_unspecified' "$source_address" >/dev/null 2>&1 || exit 78
-/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_unspecified' "$local_address" >/dev/null 2>&1 || exit 78
-/usr/bin/printf '%s\n' "$source_host" | /usr/bin/grep -Eq '^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$' || exit 78
-case "$local_port" in ''|*[!0-9]*) exit 78;; esac
-[ "$local_port" -ge 1 ] && [ "$local_port" -le 65535 ] || exit 78
-/usr/bin/getent ahosts "$source_host" 2>/dev/null | /usr/bin/awk '{print $1}' \
-    | /usr/bin/python3 -c 'import ipaddress,sys; expected=ipaddress.ip_address(sys.argv[1]); assert any(ipaddress.ip_address(line.strip()) == expected for line in sys.stdin if line.strip())' "$source_address" || exit 78
+context_unknown=$(/usr/bin/awk -F= 'NF && $1!="schema_version" && $1!="source_policy" {count++} END {print count+0}' "$CONTEXT")
+schema_count=$(/usr/bin/grep -c '^schema_version=landingops-ssh-audit-context/2$' "$CONTEXT" || true)
+policy_count=$(/usr/bin/grep -c '^source_policy=session-observed$' "$CONTEXT" || true)
+[ "$context_lines" -eq 2 ] && [ "$context_unknown" -eq 0 ] && [ "$schema_count" -eq 1 ] && [ "$policy_count" -eq 1 ] || exit 78
+
+# Dynamic source addresses are recorded as evidence for the current session.
+# They are not a durable authentication identity and are never broadened to a CIDR.
 set -- ${SSH_CONNECTION-}
 [ "$#" -eq 4 ] || exit 78
-[ "$1" = "$source_address" ] && [ "$3" = "$local_address" ] && [ "$4" = "$local_port" ] || exit 78
+source_address=$1
+source_host=$1
+local_address=$3
+local_port=$4
+/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_loopback and not value.is_unspecified' "$source_address" >/dev/null 2>&1 || exit 78
+/usr/bin/python3 -c 'import ipaddress,sys; value=ipaddress.ip_address(sys.argv[1]); assert not value.is_unspecified' "$local_address" >/dev/null 2>&1 || exit 78
+case "$local_port" in ''|*[!0-9]*) exit 78;; esac
+[ "$local_port" -ge 1 ] && [ "$local_port" -le 65535 ] || exit 78
 source_context_hash=$(/usr/bin/printf '%s|%s|%s|%s' "$source_address" "$source_host" "$local_address" "$local_port" | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')
 
 entry=$(/usr/bin/getent passwd "$ACCOUNT") || exit 79
@@ -68,6 +64,7 @@ authentication_methods=$(sshd_value authenticationmethods)
 authorized_keys_file=$(sshd_value authorizedkeysfile)
 authorized_keys_command=$(sshd_value authorizedkeyscommand)
 trusted_user_ca_keys=$(sshd_value trustedusercakeys)
+authorized_principals_file=$(sshd_value authorizedprincipalsfile)
 force_command=$(sshd_value forcecommand)
 permit_user_environment=$(sshd_value permituserenvironment)
 hostbased_auth=$(sshd_value hostbasedauthentication)
@@ -75,9 +72,11 @@ gssapi_auth=$(sshd_value gssapiauthentication)
 disable_forwarding=$(sshd_value disableforwarding)
 allow_agent_forwarding=$(sshd_value allowagentforwarding)
 allow_tcp_forwarding=$(sshd_value allowtcpforwarding)
+allow_streamlocal_forwarding=$(sshd_value allowstreamlocalforwarding)
 x11_forwarding=$(sshd_value x11forwarding)
 permit_tty=$(sshd_value permittty)
 permit_user_rc=$(sshd_value permituserrc)
+permit_tunnel=$(sshd_value permittunnel)
 
 non_root=false; [ "$uid" -ne 0 ] && [ "$gid" -ne 0 ] && non_root=true
 primary_group_only=false; [ "$groups" = "$ACCOUNT" ] && primary_group_only=true
@@ -93,8 +92,13 @@ effective_auth_ok=false
 if [ "$password_auth" = no ] && [ "$kbd_auth" = no ] && [ "$pubkey_auth" = yes ] \
     && [ "$authentication_methods" = publickey ] && [ "$authorized_keys_file" = '.ssh/authorized_keys' ] \
     && [ "$authorized_keys_command" = none ] && [ "$trusted_user_ca_keys" = none ] \
-    && [ "$force_command" = none ] && [ "$permit_user_environment" = no ] \
-    && [ "$hostbased_auth" = no ] && [ "$gssapi_auth" = no ]; then
+    && [ "$authorized_principals_file" = none ] \
+    && [ "$force_command" = "$WRAPPER" ] && [ "$permit_user_environment" = no ] \
+    && [ "$hostbased_auth" = no ] && [ "$gssapi_auth" = no ] \
+    && [ "$disable_forwarding" = yes ] && [ "$allow_agent_forwarding" = no ] \
+    && [ "$allow_tcp_forwarding" = no ] && [ "$allow_streamlocal_forwarding" = no ] \
+    && [ "$x11_forwarding" = no ] && [ "$permit_tty" = no ] \
+    && [ "$permit_user_rc" = no ] && [ "$permit_tunnel" = no ]; then
     effective_auth_ok=true
 fi
 
@@ -105,6 +109,7 @@ done
 
 printf 'account=%s\n' "$ACCOUNT"
 printf 'source_context_loaded=true\n'
+printf 'source_policy=session-observed\n'
 printf 'source_context_hash=%s\n' "$source_context_hash"
 printf 'non_root=%s\n' "$non_root"
 printf 'primary_group_only=%s\n' "$primary_group_only"
@@ -125,6 +130,7 @@ printf 'effective_authentication_methods=%s\n' "${authentication_methods:-unknow
 printf 'effective_authorized_keys_path=%s\n' "${authorized_keys_file:-unknown}"
 printf 'effective_authorized_keys_command=%s\n' "${authorized_keys_command:-unknown}"
 printf 'effective_trusted_user_ca_keys=%s\n' "${trusted_user_ca_keys:-unknown}"
+printf 'effective_authorized_principals_file=%s\n' "${authorized_principals_file:-unknown}"
 printf 'effective_force_command=%s\n' "${force_command:-unknown}"
 printf 'effective_permit_user_environment=%s\n' "${permit_user_environment:-unknown}"
 printf 'effective_hostbased_authentication=%s\n' "${hostbased_auth:-unknown}"
@@ -132,9 +138,11 @@ printf 'effective_gssapi_authentication=%s\n' "${gssapi_auth:-unknown}"
 printf 'effective_disable_forwarding=%s\n' "${disable_forwarding:-unknown}"
 printf 'effective_allow_agent_forwarding=%s\n' "${allow_agent_forwarding:-unknown}"
 printf 'effective_allow_tcp_forwarding=%s\n' "${allow_tcp_forwarding:-unknown}"
+printf 'effective_allow_streamlocal_forwarding=%s\n' "${allow_streamlocal_forwarding:-unknown}"
 printf 'effective_x11_forwarding=%s\n' "${x11_forwarding:-unknown}"
 printf 'effective_permit_tty=%s\n' "${permit_tty:-unknown}"
 printf 'effective_permit_user_rc=%s\n' "${permit_user_rc:-unknown}"
+printf 'effective_permit_tunnel=%s\n' "${permit_tunnel:-unknown}"
 printf 'effective_authentication_policy_ok=%s\n' "$effective_auth_ok"
 printf 'boundary_safe=%s\n' "$boundary_safe"
 printf 'sshd_config_modified=false\n'

@@ -7,6 +7,7 @@ RUN apt-get update \
 
 COPY deploy/ssh/landingops-readonly-wrapper /usr/local/libexec/landingops-readonly-wrapper
 COPY deploy/ssh/landingops-readonly-probe-v2 /usr/local/libexec/landingops-readonly-probe-v2
+COPY deploy/ssh/00-landingops-audit.conf /etc/ssh/sshd_config.d/00-landingops-audit.conf
 COPY tests/openssh/entrypoint.sh /usr/local/libexec/landingops-openssh-test-entrypoint
 RUN chmod 0755 /usr/local/libexec/landingops-readonly-wrapper \
     /usr/local/libexec/landingops-readonly-probe-v2 \

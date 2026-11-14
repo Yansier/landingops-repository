@@ -14,12 +14,13 @@
     },
     "target": {
       "type": "object", "additionalProperties": false,
-      "required": ["ssh_host", "ssh_port", "ssh_user", "ssh_host_fingerprint", "baota_https_origin", "expected_baota_version"],
+      "required": ["ssh_host", "ssh_port", "ssh_user", "ssh_host_fingerprint", "ssh_host_public_key", "baota_https_origin", "expected_baota_version"],
       "properties": {
         "ssh_host": {"type": "string", "minLength": 1, "maxLength": 253},
         "ssh_port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "ssh_user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$", "not": {"const": "root"}},
         "ssh_host_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/=]{20,100}$"},
+        "ssh_host_public_key": {"type": "string", "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$"},
         "baota_https_origin": {"type": "string", "format": "uri", "pattern": "^https://"},
         "expected_baota_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"}
       }
