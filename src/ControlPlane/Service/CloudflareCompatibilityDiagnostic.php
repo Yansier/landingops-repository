@@ -40,18 +40,23 @@ final class CloudflareCompatibilityDiagnostic
             return [
                 'classification' => 'verified_read_only',
                 'token' => ['status' => $tokenStatus['status'], 'expires_on' => $tokenStatus['expires_on']],
-                'zone' => ['id' => $zone['id'], 'name' => $zone['name'], 'status' => $zone['status'], 'account_matches' => true],
+                'zone' => [
+                    'id' => $zone['id'], 'name' => $zone['name'], 'status' => $zone['status'],
+                    'account_matches' => true,
+                    'authoritative_nameserver_count' => $zone['authoritative_nameserver_count'],
+                ],
                 'dns_read' => [
                     'exact_record_count' => count($exact),
                     'exact_record_types' => self::types($exact),
                     'wildcard_exact_record_count' => count($wildcard),
                     'wildcard_record_types' => self::types($wildcard),
-                    'apex_ns_record_count' => count(array_filter($apex, static fn (array $row): bool => $row['type'] === 'NS')),
+                    'explicit_apex_ns_record_count' => count(array_filter($apex, static fn (array $row): bool => $row['type'] === 'NS')),
                     'precheck_scope' => 'exact_name_plus_zone_wildcard_and_apex_ns_only',
                 ],
                 'write_operations_performed' => false,
                 'limitations' => [
                     '只读查询不能全面证明父级或子级委派、通配符继承及 CNAME 最终目标安全。',
+                    'Zone 权威名称服务器数量来自 Zone 元数据；显式 apex NS 数量仅来自 DNS Records 列表，两者语义不同。',
                     '正式写入前必须重新获取完整相关记录并执行专门的委派规则检查。',
                 ],
             ];

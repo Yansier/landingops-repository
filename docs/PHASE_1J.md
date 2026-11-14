@@ -38,6 +38,8 @@ Remove-Item Env:LANDINGOPS_DIAGNOSTIC_BAOTA_API_KEY
 
 Cloudflare 诊断固定访问官方 API origin，验证 Token、明确 Zone ID/名称、可选 Account ID、候选 FQDN 精确记录、Zone 通配符精确名称和 apex NS 摘要。报告只含数量与类型，不含 Token 或记录 content。该查询不能全面证明上级/子级委派、通配符继承或 CNAME 最终目标安全。
 
+真实响应兼容性收尾后，NS 摘要明确拆分为两种证据：`zone.authoritative_nameserver_count` 来自 Zone 元数据的 `name_servers`，表示 Cloudflare 分配的权威名称服务器数量；`dns_read.explicit_apex_ns_record_count` 来自 DNS Records 精确 apex 查询，只表示用户记录列表中显式存在的 apex NS 数量。两者不能互相替代，也不能据此全面排除子域委派。
+
 ```powershell
 $env:LANDINGOPS_DIAGNOSTIC_CF_TOKEN='<通过本地安全输入设置>'
 $env:LANDINGOPS_DIAGNOSTIC_CF_ZONE_ID='<明确的测试 Zone ID>'
@@ -77,17 +79,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\.tools\ssh\Run-MySqlIntegr
 - 宝塔真实只读联调：**PASS / needs_attention（预算导致）**。已在操作者明确授权的固定 HTTPS origin 上验证宝塔 `8.0.7`、`Ubuntu 24.04.3 LTS x86_64 (Py3.12.3)`。`GetSystemTotal`、`getData(table=sites)`、`GetSiteDomains`、`GetPHPVersion` 均可用；站点清单 26 条、1 页、根目录字段完整，前 20 次域名详情查询全部成功。因固定详情预算为 20、站点数为 26，最终报告按设计返回 `needs_attention`，不能声称所有站点绑定详情完整。
 - 宝塔安全入口：网页登录入口已确认有效，但官方 API 使用根路由；安全入口前缀和入口 Cookie 均不用于 API。TLS 校验通过、未跟随重定向；本机与面板 HTTP 时间差约 1 秒。
 - 宝塔未验证能力：没有读取生产目录，因此目录是否存在、符号链接、未知文件、同文件系统原子切换、独立 Unix 用户/FPM pool、Nginx/private 隔离仍为 `unsupported`，也不构成未来建站许可。
-- Cloudflare 真实只读联调：**SKIP**，本轮没有获得受限测试 Token、Zone 与 Account 的明确授权输入；模拟测试覆盖正常、401、403、429、超时、Zone 身份及 DNS 查询路径。
+- Cloudflare 真实只读联调：**PASS**。使用操作者明确授权、具有时限的只读 Token 验证 Token 为 active、Zone 为 active、Zone ID/名称及 Account ID 均匹配、DNS Read 可用。候选精确名称返回 0 条，Zone 通配符精确名称返回 1 条 A 记录，Zone 元数据返回 2 个权威名称服务器，DNS Records apex 查询返回 0 条显式 NS 记录。报告不含记录 content、名称服务器值、Token 或其他 Zone 数据；`write_operations_performed=false`。
+- Cloudflare 剩余限制：精确候选名无记录不代表不存在通配符影响；本次已发现通配符 A 记录，因此未来正式 DNS 写入必须继续阻断并要求专门确认。只读查询也未全面证明父级/子级委派、CNAME 最终目标或外部解析链安全。
 - MariaDB：**PASS**。通过 SSH 隧道 `127.0.0.1:13306` 验证 MariaDB `10.11.10-MariaDB-log`；`DATABASE()` 为 `landingops_test`，账号为 `landingops_test@localhost` 且权限范围检查通过。001–005、重复/失败迁移恢复、FK/CHECK/UNIQUE、凭据上下文与多 Zone 失效、Cookie Session/CSRF、负责人转交、模板与域名授权、宝塔密文及单例约束均通过。
 - 新增真实 PDO API 往返：配置表单 GET 与 Dry Run POST 返回成功，配置通过 Schema 校验，执行前后 `instances`、`domain_reservations`、`deployment_jobs`、`job_steps` 数量一致；事务回滚后 22 张业务表无测试数据，正式 schema 与迁移账本保留。
 - 即使两项只读诊断通过，也不构成 DNS 写入、建站、目录访问或正式部署许可。
 
 ## 最终测试结果
 
-- PHP 自动化：`97 passed, 0 failed`；
+- PHP 自动化：`98 passed, 0 failed`；
 - Vue/Vitest：`7 files / 30 tests passed`；
 - PHP 语法：100 个文件通过；Composer `validate --strict` 通过；
 - Vue TypeScript 与 Vite 生产构建通过；
 - 只读诊断 CLI 无参数冒烟测试按契约返回 usage/exit 2；模拟适配器报告不含测试 Token/API Key；
 - 真实 MariaDB 集成：PASS，且只操作 `landingops_test`。
 - 真实宝塔只读诊断：系统摘要、26 条站点清单、20 次绑定详情和 2 个 PHP 版本读取成功；`write_operations_performed=false`。
+- 真实 Cloudflare 只读诊断：Token/Zone/Account/DNS Read 验证成功；精确名称、通配符、权威名称服务器及显式 apex NS 均只输出数量/类型摘要；`write_operations_performed=false`。

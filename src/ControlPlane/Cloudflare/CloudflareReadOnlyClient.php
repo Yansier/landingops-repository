@@ -16,7 +16,9 @@ final class CloudflareReadOnlyClient
         private readonly CloudflareHttpTransport $transport = new StreamCloudflareHttpTransport(),
         ?Closure $sleeper = null,
     ) {
-        $this->sleeper = $sleeper ?? static fn (int $microseconds): int => usleep($microseconds);
+        $this->sleeper = $sleeper ?? static function (int $microseconds): void {
+            usleep($microseconds);
+        };
     }
 
     /** @return array{id:string,status:string,expires_on:?string} */
@@ -33,7 +35,7 @@ final class CloudflareReadOnlyClient
         ];
     }
 
-    /** @return array{id:string,name:string,status:string,account_id:?string} */
+    /** @return array{id:string,name:string,status:string,account_id:?string,authoritative_nameserver_count:?int} */
     public function zone(string $token, string $zoneId): array
     {
         self::identifier($zoneId);
@@ -43,10 +45,21 @@ final class CloudflareReadOnlyClient
             || !is_string($result['name'] ?? null) || !is_string($result['status'] ?? null)) {
             throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare Zone 响应格式无效。');
         }
+        if (!hash_equals($zoneId, $result['id'])) {
+            throw new ApiException(422, 'cloudflare_zone_mismatch', 'Cloudflare Zone 响应 ID 与明确选择不一致。');
+        }
+        $nameServers = $result['name_servers'] ?? null;
+        if ($nameServers !== null && (!is_array($nameServers) || !array_is_list($nameServers)
+            || array_filter($nameServers, static fn (mixed $value): bool => !is_string($value)) !== [])) {
+            throw new ApiException(502, 'cloudflare_response_invalid', 'Cloudflare Zone 名称服务器响应格式无效。');
+        }
         return [
             'id' => $result['id'], 'name' => strtolower(rtrim($result['name'], '.')), 'status' => $result['status'],
             'account_id' => is_array($result['account'] ?? null) && is_string($result['account']['id'] ?? null)
                 ? $result['account']['id'] : null,
+            'authoritative_nameserver_count' => is_array($nameServers)
+                ? count(array_unique(array_map(static fn (string $value): string => strtolower(rtrim($value, '.')), $nameServers)))
+                : null,
         ];
     }
 

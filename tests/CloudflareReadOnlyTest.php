@@ -47,7 +47,7 @@ return [
     'cloudflare compatibility diagnostic checks exact wildcard and apex without exposing secrets' => static function (): void {
         $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
-            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'example.com', 'status' => 'active', 'account' => ['id' => 'acct_1']]]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'example.com', 'status' => 'active', 'account' => ['id' => 'acct_1'], 'name_servers' => ['Ada.NS.Cloudflare.com.', 'Bob.NS.Cloudflare.com']]]),
             cfResponse(200, ['success' => true, 'result' => [], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'wild_1', 'type' => 'A', 'name' => '*.example.com', 'content' => '203.0.113.1', 'proxied' => false, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'ns_1', 'type' => 'NS', 'name' => 'example.com', 'content' => 'ns.example.net', 'proxied' => null, 'ttl' => 3600]], 'result_info' => ['total_pages' => 1]]),
@@ -56,7 +56,8 @@ return [
             ->run('never-output-this-token', 'zone_1', 'example.com', 'acct_1', 'www.example.com');
         TestHarness::assertSame('verified_read_only', $report['classification']);
         TestHarness::assertSame(1, $report['dns_read']['wildcard_exact_record_count']);
-        TestHarness::assertSame(1, $report['dns_read']['apex_ns_record_count']);
+        TestHarness::assertSame(2, $report['zone']['authoritative_nameserver_count']);
+        TestHarness::assertSame(1, $report['dns_read']['explicit_apex_ns_record_count']);
         TestHarness::assertFalse($report['write_operations_performed']);
         TestHarness::assertNotContains('never-output-this-token', json_encode($report, JSON_THROW_ON_ERROR));
         TestHarness::assertSame(5, count($transport->paths));
@@ -65,12 +66,14 @@ return [
     'cloudflare read only client verifies token zone and exact dns path' => static function (): void {
         $transport = new FakeCloudflareTransport(
             cfResponse(200, ['success' => true, 'result' => ['id' => 'token-id', 'status' => 'active']]),
-            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'Example.COM.', 'status' => 'active', 'account' => ['id' => 'acct_1']]]),
+            cfResponse(200, ['success' => true, 'result' => ['id' => 'zone_1', 'name' => 'Example.COM.', 'status' => 'active', 'account' => ['id' => 'acct_1'], 'name_servers' => ['ada.ns.cloudflare.com']]]),
             cfResponse(200, ['success' => true, 'result' => [['id' => 'dns_1', 'type' => 'A', 'name' => 'www.example.com', 'content' => '203.0.113.10', 'proxied' => true, 'ttl' => 1]], 'result_info' => ['total_pages' => 1]]),
         );
         $client = new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {});
         TestHarness::assertSame('active', $client->verifyToken('synthetic-token')['status']);
-        TestHarness::assertSame('example.com', $client->zone('synthetic-token', 'zone_1')['name']);
+        $zone = $client->zone('synthetic-token', 'zone_1');
+        TestHarness::assertSame('example.com', $zone['name']);
+        TestHarness::assertSame(1, $zone['authoritative_nameserver_count']);
         TestHarness::assertSame('A', $client->dnsRecords('synthetic-token', 'zone_1', 'www.example.com')[0]['type']);
         TestHarness::assertSame('/user/tokens/verify', $transport->paths[0]);
         TestHarness::assertSame('/zones/zone_1', $transport->paths[1]);
@@ -101,5 +104,17 @@ return [
         );
         TestHarness::assertSame('cloudflare_identifier_invalid', $error->errorCode);
         TestHarness::assertSame([], $transport->paths);
+    },
+
+    'cloudflare zone response id must match the explicitly requested zone' => static function (): void {
+        $transport = new FakeCloudflareTransport(cfResponse(200, ['success' => true, 'result' => [
+            'id' => 'different_zone', 'name' => 'example.com', 'status' => 'active',
+        ]]));
+        $client = new CloudflareReadOnlyClient($transport, static function (int $microseconds): void {});
+        $error = TestHarness::assertThrows(
+            static fn () => $client->zone('synthetic-token', 'zone_1'),
+            ApiException::class,
+        );
+        TestHarness::assertSame('cloudflare_zone_mismatch', $error->errorCode);
     },
 ];
