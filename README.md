@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1L.1（部署工具安全边界修复）**。平台部署工具已收紧 HTTPS Origin、授权模拟沙箱和公开构建资源边界；手工环境事实明确只能用于模拟与计划。真实服务器写入仍在代码层禁用，客户网站部署、DNS、SSL 和生产 Worker 均未启动。
+> 当前状态：**Phase 1M-A（真实服务器只读诊断与部署环境验收）**。已实现固定命令白名单、SSH 指纹锁定和签名证据契约；当前因尚无经授权的专用非 root 只读账号，真实 SSH 采集明确 SKIP。真实服务器写入仍在代码层禁用。
 
 ## 最重要的边界
 
@@ -39,6 +39,9 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1L 可移植部署基础](docs/PHASE_1L.md) | 平台自身的构建、诊断、计划、模拟安装/更新/回滚与安全边界 |
 | [平台部署工具手册](docs/DEPLOYMENT_TOOL.md) | Windows 安全入口、配置、构建、模拟执行和迁移检查单 |
 | [Phase 1L 验收报告](docs/PHASE_1L_ACCEPTANCE.md) | 自动化结果、覆盖场景和真实安装前未验证项 |
+| [Phase 1M-A 只读诊断](docs/PHASE_1M_A.md) | 固定 SSH 探针、主机指纹、签名证据和安全运行方式 |
+| [Phase 1M-A 环境报告](docs/PHASE_1M_A_ENVIRONMENT_REPORT.md) | 已知事实、真实 SSH SKIP 原因及未确认项目 |
+| [Phase 1M-A 首次安装计划](docs/PHASE_1M_A_INSTALL_PLAN.md) | 人工准备、待授权修改、缺失证据和 1M-B 边界 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -63,6 +66,7 @@ bin/landingops         # validate / package-sample / build CLI
 bin/landingops-control # migrate / bootstrap-admin CLI
 bin/landingops-readonly-diagnostic # 明确授权后运行的宝塔/Cloudflare 只读诊断
 bin/landingops-deploy  # 平台自身 doctor / plan / build / 仅本地模拟执行
+bin/landingops-remote-doctor # 固定白名单的 SSH 只读 collect / verify / plan
 deploy/                # 非敏感配置 Schema、示例及 Nginx 模板
 scripts/               # Windows 安全入口和生产构建入口
 examples/              # 最小 LTS v1.0 模板和实例配置

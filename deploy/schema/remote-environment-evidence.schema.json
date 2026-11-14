@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://landingops.invalid/schema/remote-environment-evidence-1.0.json",
+  "title": "LandingOps trusted SSH read-only environment evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "source", "trust_level", "collector_version", "classification",
+    "observed_at", "expires_at", "target", "facts", "capabilities", "blockers", "errors",
+    "command_policy", "real_execution_eligible", "phase_1m_b_authorization_required",
+    "real_execution_enabled", "write_operations_performed", "signature"
+  ],
+  "properties": {
+    "schema_version": {"const": "landingops-remote-evidence/1.0"},
+    "source": {"const": "trusted_ssh_readonly_collector"},
+    "trust_level": {"const": "verified_read_only_session"},
+    "collector_version": {"const": "phase-1m-a/1.0"},
+    "classification": {"enum": ["readonly_verified_with_pending_writes", "readonly_blocked"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "configured_user", "observed_user", "uid", "gid", "host_key_fingerprint", "host_key_verified", "session_id"],
+      "properties": {
+        "host": {"type": "string"}, "port": {"type": "integer"},
+        "configured_user": {"type": "string"}, "observed_user": {"type": ["string", "null"]},
+        "uid": {"type": ["integer", "null"]}, "gid": {"type": ["integer", "null"]},
+        "host_key_fingerprint": {"type": "string", "pattern": "^SHA256:"},
+        "host_key_verified": {"const": true}, "session_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+      }
+    },
+    "facts": {"type": "object"},
+    "capabilities": {
+      "type": "object", "additionalProperties": false,
+      "required": ["confirmed", "pending", "unsupported"],
+      "properties": {
+        "confirmed": {"type": "array", "items": {"type": "string"}},
+        "pending": {"type": "array", "items": {"type": "string"}},
+        "unsupported": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "errors": {"type": "array", "items": {"type": "object"}},
+    "command_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "probe_count", "arbitrary_commands_allowed"],
+      "properties": {
+        "id": {"const": "landingops-linux-readonly-v1"},
+        "probe_count": {"type": "integer", "minimum": 1},
+        "arbitrary_commands_allowed": {"const": false}
+      }
+    },
+    "real_execution_eligible": {"const": false},
+    "phase_1m_b_authorization_required": {"const": true},
+    "real_execution_enabled": {"const": false},
+    "write_operations_performed": {"const": false},
+    "signature": {
+      "type": "object", "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {"const": "hmac-sha256"},
+        "key_id": {"type": "string", "pattern": "^[a-f0-9]{16}$"},
+        "value": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    }
+  }
+}

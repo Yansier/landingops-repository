@@ -17,7 +17,7 @@ require __DIR__ . '/MemoryControlPlaneRepository.php';
 use LandingOps\Tests\TestHarness;
 
 $tests = [];
-foreach (['TemplateValidatorTest.php', 'OfflineInstanceBuilderTest.php', 'ContractTest.php', 'ControlPlaneTest.php', 'TemplateManagementTest.php', 'CloudflareDomainTest.php', 'CloudflareReadOnlyTest.php', 'WildcardDnsPolicyTest.php', 'BaotaReadOnlyTest.php', 'DeploymentDryRunTest.php', 'DeploymentToolTest.php'] as $file) {
+foreach (['TemplateValidatorTest.php', 'OfflineInstanceBuilderTest.php', 'ContractTest.php', 'ControlPlaneTest.php', 'TemplateManagementTest.php', 'CloudflareDomainTest.php', 'CloudflareReadOnlyTest.php', 'WildcardDnsPolicyTest.php', 'BaotaReadOnlyTest.php', 'DeploymentDryRunTest.php', 'DeploymentToolTest.php', 'RemoteDeploymentDiagnosticTest.php'] as $file) {
     /** @var array<string,Closure> $suite */
     $suite = require __DIR__ . '/' . $file;
     $tests = array_merge($tests, $suite);

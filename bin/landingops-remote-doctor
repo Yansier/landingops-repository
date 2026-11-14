@@ -1,0 +1,119 @@
+<?php
+
+declare(strict_types=1);
+
+use LandingOps\Deployment\DeploymentConfig;
+use LandingOps\Deployment\DeploymentException;
+use LandingOps\Deployment\OpenSshReadOnlyTransport;
+use LandingOps\Deployment\RemoteEvidenceValidator;
+use LandingOps\Deployment\RemoteInstallationPlanner;
+use LandingOps\Deployment\SshEnvironmentCollector;
+
+$root = dirname(__DIR__);
+require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
+
+function remoteDoctorUsage(int $exit): never
+{
+    fwrite($exit === 0 ? STDOUT : STDERR, <<<TXT
+LandingOps Phase 1M-A trusted SSH read-only diagnostic
+
+Usage:
+  php bin/landingops-remote-doctor collect --config <file>
+  php bin/landingops-remote-doctor verify --config <file> --evidence <file>
+  php bin/landingops-remote-doctor plan --config <file> --evidence <file>
+
+The evidence HMAC key is read only from LANDINGOPS_REMOTE_EVIDENCE_KEY.
+No arbitrary remote command, write operation, upload or deployment action is available.
+TXT);
+    exit($exit);
+}
+
+/** @param list<string> $arguments @return array<string,string> */
+function remoteDoctorOptions(array $arguments): array
+{
+    $options = [];
+    while ($arguments !== []) {
+        $name = array_shift($arguments);
+        $value = array_shift($arguments);
+        if (!is_string($name) || !in_array($name, ['--config', '--evidence'], true)
+            || !is_string($value) || str_starts_with($value, '--') || isset($options[substr($name, 2)])) {
+            remoteDoctorUsage(1);
+        }
+        $options[substr($name, 2)] = $value;
+    }
+    return $options;
+}
+
+/** @return array<string,mixed> */
+function remoteDoctorJson(string $path): array
+{
+    try {
+        $value = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        throw new DeploymentException('remote_evidence_file_invalid', '远端证据文件无效。');
+    }
+    if (!is_array($value) || array_is_list($value)) {
+        throw new DeploymentException('remote_evidence_file_invalid', '远端证据必须是 JSON 对象。');
+    }
+    return $value;
+}
+
+/** @param array<string,mixed> $value */
+function remoteDoctorOutput(array $value): never
+{
+    fwrite(STDOUT, json_encode($value, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(0);
+}
+
+$command = $argv[1] ?? null;
+if ($command === null || in_array($command, ['help', '--help', '-h'], true)) {
+    remoteDoctorUsage($command === null ? 1 : 0);
+}
+
+try {
+    if (!in_array($command, ['collect', 'verify', 'plan'], true)) {
+        remoteDoctorUsage(1);
+    }
+    $options = remoteDoctorOptions(array_slice($argv, 2));
+    if (!isset($options['config'])) {
+        throw new DeploymentException('deployment_config_missing', '--config 必填。');
+    }
+    $key = getenv('LANDINGOPS_REMOTE_EVIDENCE_KEY');
+    if (!is_string($key) || strlen($key) < 32) {
+        throw new DeploymentException('evidence_key_missing', '缺少临时远端证据签名密钥。');
+    }
+    $config = DeploymentConfig::fromFile($options['config']);
+    if ($command === 'collect') {
+        remoteDoctorOutput((new SshEnvironmentCollector(new OpenSshReadOnlyTransport()))->collect($config, $key));
+    }
+    if (!isset($options['evidence'])) {
+        throw new DeploymentException('remote_evidence_file_missing', '--evidence 必填。');
+    }
+    $evidence = remoteDoctorJson($options['evidence']);
+    if ($command === 'verify') {
+        $verified = (new RemoteEvidenceValidator())->validate($evidence, $config, $key);
+        remoteDoctorOutput([
+            'classification' => 'verified_read_only_evidence',
+            'session_id' => $verified['target']['session_id'],
+            'expires_at' => $verified['expires_at'],
+            'real_execution_eligible' => false,
+            'real_execution_enabled' => false,
+            'write_operations_performed' => false,
+        ]);
+    }
+    remoteDoctorOutput((new RemoteInstallationPlanner())->plan($config, $evidence, $key));
+} catch (DeploymentException $exception) {
+    fwrite(STDERR, json_encode([
+        'error' => ['code' => $exception->errorCode, 'message' => $exception->getMessage(), 'details' => $exception->details],
+        'real_execution_enabled' => false,
+        'write_operations_performed' => false,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(1);
+} catch (Throwable) {
+    fwrite(STDERR, json_encode([
+        'error' => ['code' => 'remote_diagnostic_internal_error', 'message' => '只读诊断发生未公开的内部错误。'],
+        'real_execution_enabled' => false,
+        'write_operations_performed' => false,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(1);
+}
