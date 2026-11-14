@@ -1,0 +1,26 @@
+{
+  "identity": {
+    "host": "192.0.2.10", "port": 22, "user": "landingops-deploy", "uid": 1201,
+    "host_key_verified": true, "host_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "baota": {"https_origin": "https://panel.example.invalid:8888", "version": "8.0.7", "write_api_used": false},
+  "filesystem": {
+    "parent_exists": true, "parent_authorized": true, "ancestors_have_symlink": false,
+    "target_state": "absent", "installation_id": null, "atomic_rename": true,
+    "same_filesystem": true, "public_root_isolated": true, "foreign_site_overlap": false
+  },
+  "runtime": {
+    "php_version": "8.3.14", "php_extensions": ["json", "openssl", "pdo", "pdo_mysql", "zip"],
+    "nginx_version": "1.24.0", "nginx_config_test_ok": true, "shared_php_fpm_modified": false
+  },
+  "database": {
+    "name": "landingops", "user": "landingops_app", "grants_limited_to_database": true,
+    "state": "empty", "migrations": [], "backup_verified": true, "restore_test_verified": true
+  },
+  "tls": {"hostname": "landingops.example.invalid", "certificate_ready": true},
+  "build": {
+    "composer_lock_present": true, "composer_install_ok": true, "php_tests_ok": true,
+    "node_lock_present": true, "vue_typecheck_ok": true, "vue_build_ok": true,
+    "release_manifest_verified": true
+  }
+}

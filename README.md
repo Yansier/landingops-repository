@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1K.1（通配符匹配与 Preflight 证据闭环）**。V1 按 Cloudflare 多层通配符规则逐级验证祖先节点，并以服务端不可混淆的宝塔清单快照闭合 20+N 分批证据。所有 Dry Run 仍为只读/零写入；尚未创建站点、DNS、SSL 或生产文件。
+> 当前状态：**Phase 1L（可移植自动部署工具与安全安装基础）**。已实现 LandingOps 平台自身的严格配置契约、生产构建、doctor、零执行计划和本地隔离模拟；真实服务器写入仍在代码层禁用。客户网站部署、DNS、SSL 和生产 Worker 均未启动。
 
 ## 最重要的边界
 
@@ -36,6 +36,9 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1J 配置与只读验收](docs/PHASE_1J.md) | 严格表单转换、显式不支持错误、脱敏只读诊断和真实 PDO 往返 |
 | [Phase 1K 通配符与 Preflight](docs/PHASE_1K.md) | Zone 筛选、实际适用通配符、宝塔详情分批、零 DNS 写入计划 |
 | [V1 DNS 策略](docs/DNS_STRATEGY.md) | 通配符复用条件、分类语义与 fail-closed 边界 |
+| [Phase 1L 可移植部署基础](docs/PHASE_1L.md) | 平台自身的构建、诊断、计划、模拟安装/更新/回滚与安全边界 |
+| [平台部署工具手册](docs/DEPLOYMENT_TOOL.md) | Windows 安全入口、配置、构建、模拟执行和迁移检查单 |
+| [Phase 1L 验收报告](docs/PHASE_1L_ACCEPTANCE.md) | 自动化结果、覆盖场景和真实安装前未验证项 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 
@@ -59,11 +62,14 @@ public/index.php       # Phase 1C JSON API 前端控制器
 bin/landingops         # validate / package-sample / build CLI
 bin/landingops-control # migrate / bootstrap-admin CLI
 bin/landingops-readonly-diagnostic # 明确授权后运行的宝塔/Cloudflare 只读诊断
+bin/landingops-deploy  # 平台自身 doctor / plan / build / 仅本地模拟执行
+deploy/                # 非敏感配置 Schema、示例及 Nginx 模板
+scripts/               # Windows 安全入口和生产构建入口
 examples/              # 最小 LTS v1.0 模板和实例配置
 tests/                 # 离线契约、权限服务及可选 MySQL 集成测试
 ```
 
-离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)，Phase 1J 收尾见 [Phase 1J 说明](docs/PHASE_1J.md)，通配符 Preflight 见 [Phase 1K 说明](docs/PHASE_1K.md)。
+离线模板工具见 [Phase 1B 本地运行说明](docs/PHASE_1B.md)，控制面见 [Phase 1C 本地运行说明](docs/PHASE_1C.md)，管理后台见 [Phase 1D 前端说明](docs/PHASE_1D.md)，模板业务见 [Phase 1E 说明](docs/PHASE_1E.md)，域名资源见 [Phase 1F 说明](docs/PHASE_1F.md)，Cloudflare 只读验证见 [Phase 1G 说明](docs/PHASE_1G.md)，宝塔只读边界见 [Phase 1H 说明](docs/PHASE_1H.md)，单站预演见 [Phase 1I 说明](docs/PHASE_1I.md)，Phase 1J 收尾见 [Phase 1J 说明](docs/PHASE_1J.md)，通配符 Preflight 见 [Phase 1K 说明](docs/PHASE_1K.md)，平台自身部署见 [Phase 1L 说明](docs/PHASE_1L.md)。
 
 ## 安全提示
 

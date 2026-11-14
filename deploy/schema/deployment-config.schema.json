@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://landingops.invalid/schema/deployment-config-1.0.json",
+  "title": "LandingOps portable deployment configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deployment_scope", "installation", "target", "application", "paths", "runtime", "database", "tls", "credentials", "release", "persistence"],
+  "properties": {
+    "schema_version": {"const": "landingops-deployment/1.0"},
+    "deployment_scope": {"const": "landingops_platform"},
+    "installation": {
+      "type": "object", "additionalProperties": false, "required": ["id", "mode"],
+      "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,47}$"}, "mode": {"enum": ["fresh", "existing_migration"]}}
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ssh_host", "ssh_port", "ssh_user", "ssh_host_fingerprint", "baota_https_origin", "expected_baota_version"],
+      "properties": {
+        "ssh_host": {"type": "string", "minLength": 1, "maxLength": 253},
+        "ssh_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "ssh_user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$", "not": {"const": "root"}},
+        "ssh_host_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/=]{20,100}$"},
+        "baota_https_origin": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "expected_baota_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"}
+      }
+    },
+    "application": {
+      "type": "object", "additionalProperties": false, "required": ["domain"],
+      "properties": {"domain": {"type": "string", "minLength": 3, "maxLength": 253}}
+    },
+    "paths": {
+      "type": "object", "additionalProperties": false,
+      "required": ["install_root", "releases_dir", "current_link", "shared_dir", "staging_dir", "private_template_storage", "backup_dir"],
+      "properties": {
+        "install_root": {"$ref": "#/$defs/absolutePath"}, "releases_dir": {"$ref": "#/$defs/absolutePath"},
+        "current_link": {"$ref": "#/$defs/absolutePath"}, "shared_dir": {"$ref": "#/$defs/absolutePath"},
+        "staging_dir": {"$ref": "#/$defs/absolutePath"}, "private_template_storage": {"$ref": "#/$defs/absolutePath"},
+        "backup_dir": {"$ref": "#/$defs/absolutePath"}
+      }
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false, "required": ["php_constraint", "required_extensions", "nginx_required"],
+      "properties": {
+        "php_constraint": {"const": ">=8.1 <9.0"},
+        "required_extensions": {"type": "array", "uniqueItems": true, "items": {"type": "string"}, "allOf": [
+          {"contains": {"const": "json"}}, {"contains": {"const": "openssl"}}, {"contains": {"const": "pdo"}},
+          {"contains": {"const": "pdo_mysql"}}, {"contains": {"const": "zip"}}
+        ]},
+        "nginx_required": {"const": true}
+      }
+    },
+    "database": {
+      "type": "object", "additionalProperties": false, "required": ["host", "port", "name", "user", "engine", "mode"],
+      "properties": {
+        "host": {"type": "string", "minLength": 1}, "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "name": {"type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$"}, "user": {"type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$"},
+        "engine": {"enum": ["mysql8", "mariadb10"]}, "mode": {"enum": ["fresh", "existing"]}
+      }
+    },
+    "tls": {
+      "type": "object", "additionalProperties": false, "required": ["required", "certificate_mode", "expected_hostname"],
+      "properties": {"required": {"const": true}, "certificate_mode": {"const": "preprovisioned"}, "expected_hostname": {"type": "string"}}
+    },
+    "credentials": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ssh_private_key_env", "database_password_env", "application_keyring_env", "application_active_key_version_env"],
+      "properties": {
+        "ssh_private_key_env": {"$ref": "#/$defs/environmentReference"},
+        "database_password_env": {"$ref": "#/$defs/environmentReference"},
+        "application_keyring_env": {"$ref": "#/$defs/environmentReference"},
+        "application_active_key_version_env": {"$ref": "#/$defs/environmentReference"}
+      }
+    },
+    "release": {
+      "type": "object", "additionalProperties": false,
+      "required": ["atomic_switch_required", "same_filesystem_required", "retain_releases", "health_path", "source", "database_auto_rollback"],
+      "properties": {
+        "atomic_switch_required": {"const": true}, "same_filesystem_required": {"const": true},
+        "retain_releases": {"type": "integer", "minimum": 2, "maximum": 20},
+        "health_path": {"type": "string", "pattern": "^/[a-z0-9/_-]{1,100}$"},
+        "source": {"const": "github_built_artifact"}, "database_auto_rollback": {"const": false}
+      }
+    },
+    "persistence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["database_backup_required", "template_storage_required", "keyring_backup_required", "restore_test_required_before_migration"],
+      "properties": {
+        "database_backup_required": {"const": true}, "template_storage_required": {"const": true},
+        "keyring_backup_required": {"const": true}, "restore_test_required_before_migration": {"const": true}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"installation": {"properties": {"mode": {"const": "fresh"}}}}},
+      "then": {"properties": {"database": {"properties": {"mode": {"const": "fresh"}}}}}
+    },
+    {
+      "if": {"properties": {"installation": {"properties": {"mode": {"const": "existing_migration"}}}}},
+      "then": {"properties": {"database": {"properties": {"mode": {"const": "existing"}}}}}
+    }
+  ],
+  "$defs": {
+    "absolutePath": {"type": "string", "pattern": "^/(?!.*(?:^|/)\\.\\.?/)(?!.*//).+$"},
+    "environmentReference": {"type": "string", "pattern": "^LANDINGOPS_[A-Z0-9_]{3,100}$"}
+  }
+}

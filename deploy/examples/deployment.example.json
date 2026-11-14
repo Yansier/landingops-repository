@@ -1,0 +1,47 @@
+{
+  "schema_version": "landingops-deployment/1.0",
+  "deployment_scope": "landingops_platform",
+  "installation": {"id": "landingops-primary", "mode": "fresh"},
+  "target": {
+    "ssh_host": "192.0.2.10",
+    "ssh_port": 22,
+    "ssh_user": "landingops-deploy",
+    "ssh_host_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "baota_https_origin": "https://panel.example.invalid:8888",
+    "expected_baota_version": "8.0.7"
+  },
+  "application": {"domain": "landingops.example.invalid"},
+  "paths": {
+    "install_root": "/srv/landingops",
+    "releases_dir": "/srv/landingops/releases",
+    "current_link": "/srv/landingops/current",
+    "shared_dir": "/srv/landingops/shared",
+    "staging_dir": "/srv/landingops/staging",
+    "private_template_storage": "/srv/landingops/shared/template-zips",
+    "backup_dir": "/srv/landingops/shared/backups"
+  },
+  "runtime": {
+    "php_constraint": ">=8.1 <9.0",
+    "required_extensions": ["json", "openssl", "pdo", "pdo_mysql", "zip"],
+    "nginx_required": true
+  },
+  "database": {
+    "host": "127.0.0.1", "port": 3306, "name": "landingops", "user": "landingops_app",
+    "engine": "mariadb10", "mode": "fresh"
+  },
+  "tls": {"required": true, "certificate_mode": "preprovisioned", "expected_hostname": "landingops.example.invalid"},
+  "credentials": {
+    "ssh_private_key_env": "LANDINGOPS_DEPLOY_SSH_PRIVATE_KEY",
+    "database_password_env": "LANDINGOPS_DEPLOY_DB_PASSWORD",
+    "application_keyring_env": "LANDINGOPS_DEPLOY_APP_KEYRING",
+    "application_active_key_version_env": "LANDINGOPS_DEPLOY_APP_ACTIVE_KEY_VERSION"
+  },
+  "release": {
+    "atomic_switch_required": true, "same_filesystem_required": true, "retain_releases": 3,
+    "health_path": "/healthz", "source": "github_built_artifact", "database_auto_rollback": false
+  },
+  "persistence": {
+    "database_backup_required": true, "template_storage_required": true,
+    "keyring_backup_required": true, "restore_test_required_before_migration": true
+  }
+}

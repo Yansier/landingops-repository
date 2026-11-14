@@ -1,0 +1,140 @@
+<?php
+
+declare(strict_types=1);
+
+use LandingOps\Deployment\DeploymentConfig;
+use LandingOps\Deployment\DeploymentDoctor;
+use LandingOps\Deployment\DeploymentException;
+use LandingOps\Deployment\DeploymentExecutionPolicy;
+use LandingOps\Deployment\DeploymentPlanner;
+use LandingOps\Deployment\ReleaseBuilder;
+use LandingOps\Deployment\SimulatedDeploymentExecutor;
+
+$root = dirname(__DIR__);
+require is_file($root . '/vendor/autoload.php') ? $root . '/vendor/autoload.php' : $root . '/src/autoload.php';
+
+function deploymentUsage(int $code): never
+{
+    fwrite($code === 0 ? STDOUT : STDERR, <<<TXT
+LandingOps portable deployment foundation (Phase 1L)
+
+Usage:
+  php bin/landingops-deploy doctor --config <file> --facts <file>
+  php bin/landingops-deploy plan --config <file> --facts <file> --operation <init|update|rollback> --version <version>
+  php bin/landingops-deploy build --config <file> --version <version> --source-commit <sha> --output <directory>
+  php bin/landingops-deploy init|update --config <file> --facts <file> --version <version> --release-dir <directory> --simulate-root <directory>
+  php bin/landingops-deploy rollback --config <file> --facts <file> --version <version> --simulate-root <directory>
+
+init/update/rollback are simulation-only in Phase 1L. Without --simulate-root they hard-stop.
+Passwords, tokens, private keys and application keys are never accepted as command arguments.
+TXT);
+    exit($code);
+}
+
+/** @param list<string> $arguments @return array<string,string> */
+function deploymentOptions(array $arguments): array
+{
+    $options = [];
+    while ($arguments !== []) {
+        $name = array_shift($arguments);
+        if (!is_string($name) || !str_starts_with($name, '--') || $arguments === []) {
+            deploymentUsage(1);
+        }
+        if (preg_match('/(?:password|token|secret|api-key|private-key|keyring)/i', $name) === 1) {
+            throw new DeploymentException('secret_argument_forbidden', '敏感凭据不得作为命令行参数。');
+        }
+        $value = array_shift($arguments);
+        if (!is_string($value) || str_starts_with($value, '--')) {
+            deploymentUsage(1);
+        }
+        $options[substr($name, 2)] = $value;
+    }
+    return $options;
+}
+
+/** @return array<string,mixed> */
+function deploymentJsonFile(string $path): array
+{
+    try {
+        $value = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        throw new DeploymentException('diagnostic_facts_invalid', '诊断事实文件无效。');
+    }
+    if (!is_array($value) || array_is_list($value)) {
+        throw new DeploymentException('diagnostic_facts_invalid', '诊断事实必须是 JSON 对象。');
+    }
+    return $value;
+}
+
+/** @param array<string,mixed> $value */
+function deploymentOutput(array $value): never
+{
+    fwrite(STDOUT, json_encode($value, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(0);
+}
+
+$command = $argv[1] ?? null;
+if ($command === null || in_array($command, ['help', '--help', '-h'], true)) {
+    deploymentUsage($command === null ? 1 : 0);
+}
+
+try {
+    $options = deploymentOptions(array_slice($argv, 2));
+    $configPath = $options['config'] ?? null;
+    if (!is_string($configPath)) {
+        throw new DeploymentException('deployment_config_missing', '--config 必填。');
+    }
+    $config = DeploymentConfig::fromFile($configPath);
+    if ($command === 'build') {
+        foreach (['version', 'source-commit', 'output'] as $required) {
+            if (!isset($options[$required])) {
+                throw new DeploymentException('deployment_option_missing', '--' . $required . ' 必填。');
+            }
+        }
+        $builtAt = getenv('SOURCE_DATE_EPOCH');
+        $builtAt = is_string($builtAt) && ctype_digit($builtAt)
+            ? '@' . $builtAt
+            : gmdate('Y-m-d\TH:i:s\Z');
+        deploymentOutput((new ReleaseBuilder())->build(
+            $root, $options['output'], $options['version'], strtolower($options['source-commit']), $builtAt,
+        ));
+    }
+    $factsPath = $options['facts'] ?? null;
+    if (!is_string($factsPath)) {
+        throw new DeploymentException('diagnostic_facts_missing', '--facts 必填。');
+    }
+    $facts = deploymentJsonFile($factsPath);
+    $doctor = (new DeploymentDoctor())->inspect($config, $facts);
+    if ($command === 'doctor') {
+        deploymentOutput($doctor);
+    }
+    $operation = $command === 'plan' ? ($options['operation'] ?? '') : $command;
+    $version = $options['version'] ?? '';
+    $plan = (new DeploymentPlanner())->plan($config, $operation, $version, $doctor);
+    if ($command === 'plan') {
+        deploymentOutput($plan);
+    }
+    if (!in_array($command, ['init', 'update', 'rollback'], true)) {
+        deploymentUsage(1);
+    }
+    $simulateRoot = (new DeploymentExecutionPolicy())->requireSimulationRoot($options['simulate-root'] ?? null);
+    if (($doctor['classification'] ?? null) !== 'ready_for_simulation') {
+        throw new DeploymentException('doctor_blocked', '环境检查未通过，拒绝模拟执行。');
+    }
+    $releaseDirectory = $command === 'rollback' ? null : ($options['release-dir'] ?? null);
+    deploymentOutput((new SimulatedDeploymentExecutor())->execute(
+        $config, $command, $version, $releaseDirectory, $simulateRoot,
+    ));
+} catch (DeploymentException $exception) {
+    fwrite(STDERR, json_encode([
+        'error' => ['code' => $exception->errorCode, 'message' => $exception->getMessage(), 'details' => $exception->details],
+        'write_operations_performed' => false,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(1);
+} catch (Throwable) {
+    fwrite(STDERR, json_encode([
+        'error' => ['code' => 'deployment_internal_error', 'message' => '部署工具发生未公开的内部错误。'],
+        'write_operations_performed' => false,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+    exit(1);
+}
