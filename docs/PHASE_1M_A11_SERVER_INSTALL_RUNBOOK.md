@@ -53,8 +53,8 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 ```text
 B96F9D787A26CF8CCF578976706AEDE2EAFAFA2BCF3DA825928929AB66E82F40  00-landingops-audit.conf
-48A0B4BE2D6A67992F8CA5A7E222969626D340651B34EA85B15CDC0D307FED8C  landingops-readonly-wrapper
-77163E7768C7CDC2F02F43CE7D674BA628414FF38060223F41CEE2EBD420C0C7  landingops-readonly-probe-v2
+F6C800D6AB411EE9AD1264243F493A1944AB89836E82C46DA31BE823A81EE841  landingops-readonly-wrapper
+2F6D689ACA4DF08F242569C28EE064E6EF150D2500C877F1472AD60CAD5DD4E3  landingops-readonly-probe-v2
 C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-generate-site-summary
 0F0D11038BCCE708BB37E9C38DE8EE7BFBF2FCD56851EAB39705E936D040B8E5  landingops-audit-boundary-check
 ```
@@ -75,7 +75,7 @@ sh -n /usr/local/libexec/landingops-readonly-wrapper
 sh -n /usr/local/libexec/landingops-readonly-probe-v2
 ```
 
-停止条件：任何目标是符号链接、已存在未知文件、owner/group/mode 不符或语法检查失败。禁止覆盖未知内容。
+同时确认 `/usr/bin/python3` 可执行；wrapper 使用它严格验证 OpenSSH 提供的 `SSH_CONNECTION`。停止条件：任何目标是符号链接、已存在未知文件、owner/group/mode 不符、Python 不可用或语法检查失败。禁止覆盖未知内容。
 
 ## 4. 创建受限账号与唯一公钥
 
@@ -186,8 +186,11 @@ stat -Lc '%U|%G|%a|%n' /var/lib/landingops-audit/site-roots.snapshot
 4. SFTP、SCP、端口转发失败；
 5. `ssh -A` 不把 Agent socket 传入 wrapper；
 6. 恶意 stdin 不产生服务器文件；
-7. 密码/键盘交互认证失败；
-8. 账号无法写 wrapper、probe、authorized_keys。
+7. 缺失、非法 IP、异常端口、多余字段或多空格的 `SSH_CONNECTION` 均被 wrapper 拒绝；
+8. 合法 `SSH_CONNECTION` 的来源字段和 context hash 一致；
+9. 除固定变量和 `SSH_CONNECTION` 外，客户端/调用方环境不进入 probe；
+10. 密码/键盘交互认证失败；
+11. 账号无法写 wrapper、probe、authorized_keys。
 
 任一失败都先移除审计公钥并停止。不要通过放宽权限、开启密码或修改现有网站解决失败。
 

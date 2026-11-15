@@ -56,6 +56,7 @@ final class RemoteEvidenceValidator
         $sshSession = $evidence['facts']['ssh_session'];
         if (($sshSession['source_policy'] ?? null) !== 'session_observed'
             || ($sshSession['verified'] ?? null) !== true
+            || ($sshSession['environment_contract_verified'] ?? null) !== true
             || !is_string($sshSession['source_address'] ?? null)
             || filter_var($sshSession['source_address'], FILTER_VALIDATE_IP) === false
             || !is_int($sshSession['source_port'] ?? null)

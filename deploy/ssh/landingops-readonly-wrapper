@@ -15,6 +15,34 @@ if [ -n "${SSH_AUTH_SOCK-}" ] || [ -n "${DISPLAY-}" ]; then
     exit 67
 fi
 
+# OpenSSH supplies exactly four single-space-separated fields:
+# client-address client-port server-address server-port. Validate the value
+# before carrying this one variable across the otherwise empty environment.
+ssh_connection=${SSH_CONNECTION-}
+[ -n "$ssh_connection" ] || exit 68
+/usr/bin/python3 -c '
+import ipaddress
+import re
+import sys
+
+value = sys.argv[1]
+parts = value.split(" ")
+if len(parts) != 4 or any(part == "" for part in parts) or value != " ".join(parts):
+    raise SystemExit(1)
+for address in (parts[0], parts[2]):
+    if re.fullmatch(r"[0-9A-Fa-f:.]{2,64}", address, flags=re.ASCII) is None:
+        raise SystemExit(1)
+    parsed = ipaddress.ip_address(address)
+    if parsed.is_unspecified:
+        raise SystemExit(1)
+for port in (parts[1], parts[3]):
+    if re.fullmatch(r"[0-9]{1,5}", port, flags=re.ASCII) is None:
+        raise SystemExit(1)
+    number = int(port)
+    if number < 1 or number > 65535 or str(number) != port:
+        raise SystemExit(1)
+' "$ssh_connection" >/dev/null 2>&1 || exit 68
+
 # Client input is deliberately discarded. The fixed probe receives no arguments.
 exec </dev/null
 if [ ! -f "$PROBE" ] || [ -L "$PROBE" ] || [ ! -x "$PROBE" ]; then
@@ -29,4 +57,5 @@ esac
 exec /usr/bin/env -i \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     LANG=C LC_ALL=C HOME=/var/lib/landingops-audit \
+    SSH_CONNECTION="$ssh_connection" \
     /usr/bin/timeout 45 "$PROBE"

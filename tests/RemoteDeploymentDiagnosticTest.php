@@ -66,6 +66,7 @@ function phase1mSession(): array
             'ssh_local_address' => phase1mProbe('192.0.2.10'),
             'ssh_local_port' => phase1mProbe('22'),
             'ssh_source_context_hash' => phase1mProbe('f3a1047d5c6bda053b8fee120bf38c1f0578cfd2da5ba195b83d65ed7a72f690'),
+            'environment_contract' => phase1mProbe('clean'),
             'os_release' => phase1mProbe("ID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.3 LTS\""),
             'architecture' => phase1mProbe('x86_64'),
             'php_version' => phase1mProbe('PHP 8.3.14 (cli)'),
@@ -214,11 +215,16 @@ return [
         TestHarness::assertContains("EXPECTED_COMMAND='landingops-readonly collect v2'", $wrapper);
         TestHarness::assertContains('[ "${SSH_ORIGINAL_COMMAND-}" != "$EXPECTED_COMMAND" ]', $wrapper);
         TestHarness::assertContains('exec </dev/null', $wrapper);
+        TestHarness::assertContains('ssh_connection=${SSH_CONNECTION-}', $wrapper);
+        TestHarness::assertContains('value.split(" ")', $wrapper);
+        TestHarness::assertContains('SSH_CONNECTION="$ssh_connection"', $wrapper);
+        TestHarness::assertContains('/usr/bin/env -i', $wrapper);
         TestHarness::assertContains("PROBE='/usr/local/libexec/landingops-readonly-probe-v2'", $wrapper);
         TestHarness::assertContains("root\\|755|root\\|750", $wrapper);
         foreach (['eval ', 'sh -c', 'bash -c', '$SSH_ORIGINAL_COMMAND\n', 'exec $SSH_ORIGINAL_COMMAND'] as $forbidden) {
             TestHarness::assertNotContains($forbidden, $wrapper);
         }
+        TestHarness::assertNotContains('SSH_ORIGINAL_COMMAND="$SSH_ORIGINAL_COMMAND"', $wrapper);
     },
 
     'fixed probe exposes protocol handshake and no client supplied script channel' => static function (): void {
@@ -347,7 +353,7 @@ return [
         $runner = (string) file_get_contents(dirname(__DIR__) . '/tests/openssh/Run-IsolatedOpenSshIntegration.ps1');
         $dockerfile = (string) file_get_contents(dirname(__DIR__) . '/tests/openssh/Dockerfile');
         TestHarness::assertContains('ubuntu:24.04', $dockerfile);
-        foreach (['landingops-readonly collect v2', 'Command injection', 'Interactive shell', 'SCP', 'SFTP', 'Port forwarding', 'Agent-forwarding', 'Password authentication', 'Malicious stdin was executed', 'Audit user can write wrapper'] as $coverage) {
+        foreach (['landingops-readonly collect v2', 'Command injection', 'Interactive shell', 'SCP', 'SFTP', 'Port forwarding', 'Agent-forwarding', 'Password authentication', 'Malicious stdin was executed', 'Audit user can write wrapper', 'Missing SSH_CONNECTION', 'Invalid SSH_CONNECTION', 'Direct wrapper-to-probe runtime chain', 'SSH source context hash mismatch', 'Unexpected environment reached'] as $coverage) {
             TestHarness::assertContains($coverage, $runner);
         }
         TestHarness::assertContains('127.0.0.1::2222', $runner);
@@ -439,6 +445,15 @@ return [
             ),
             DeploymentException::class,
         )->errorCode);
+    },
+
+    'unexpected inherited environment blocks trusted ssh evidence' => static function (): void {
+        $session = phase1mSession();
+        $session['probes']['environment_contract'] = phase1mProbe('LANDINGOPS_ATTACKER', 3);
+        $evidence = phase1mCollect($session);
+        TestHarness::assertSame('readonly_blocked', $evidence['classification']);
+        TestHarness::assertTrue(in_array('ssh_environment_contract_unverified', $evidence['blockers'], true));
+        TestHarness::assertFalse($evidence['facts']['ssh_session']['environment_contract_verified']);
     },
 
     'v2 collector rejects a non fixed install root before transport evidence can be trusted' => static function (): void {

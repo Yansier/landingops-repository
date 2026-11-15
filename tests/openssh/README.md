@@ -8,6 +8,9 @@
 - 交互 shell、命令注入、SCP、SFTP、端口转发和密码认证失败；
 - 启用本地 SSH Agent 后，`restrict` 阻止 Agent socket 进入 fixed-command；
 - stdin 内容不被执行；
+- wrapper 只把经过严格校验的 `SSH_CONNECTION` 带入 `env -i` 后的 probe；
+- 缺失、非法、多余字段或异常端口的 `SSH_CONNECTION` 被拒绝；
+- probe 来源字段与 context hash 一致，调用方附加环境变量不被继承；
 - 审计账号不能修改 wrapper、probe 或 authorized_keys；
 - 容器内 sshd 使用 publickey-only、单一 AuthorizedKeysFile 和禁用环境输入的配置。
 

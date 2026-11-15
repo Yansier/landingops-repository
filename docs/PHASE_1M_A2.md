@@ -37,6 +37,12 @@ source_policy=session-observed
 
 边界检查器从当前 `SSH_CONNECTION` 派生实际 source/local endpoint，并计算 context hash。固定 probe 对每次 collect 输出同一组会话字段；Collector 校验 IP、端口及 hash 一致性后写入有签名、短时效的证据。Host Key、唯一 Ed25519 公钥、forced-command、root-owned 文件及账号隔离仍是登录安全边界。未来固定 VPN 出口可在独立审批中增加 Address 限制。
 
+### wrapper 环境边界
+
+wrapper 仍以 `env -i` 建立空环境，并继续固定 PATH、LANG、HOME、命令、probe 路径、超时和 stdin `/dev/null`。在清空前只读取 OpenSSH 提供的 `SSH_CONNECTION`，要求它恰好由四个单空格分隔字段组成；两个地址必须能被 `ipaddress` 解析且不是 unspecified，两个端口必须是无前导零的 1–65535 十进制数。缺失、制表符/多空格、额外字段、非法 IP 或端口均以退出码 68 fail closed。
+
+验证成功后只把原始 `SSH_CONNECTION` 加入 probe 环境。`SSH_ORIGINAL_COMMAND`、Agent、DISPLAY、客户端自定义环境及其他变量不会被传递。probe 的 `environment_contract` 进一步验证运行环境只有固定白名单变量和 shell 自建的 `PWD`。
+
 ## Host Key 获取与固定
 
 部署配置新增非敏感 `ssh_host_public_key`，并要求其 SHA-256 与 `ssh_host_fingerprint` 精确一致。Transport 最多执行三次 `ssh-keyscan`：
@@ -59,12 +65,12 @@ source_policy=session-observed
 ## 验收结果
 
 - 真实服务器只读策略检查：Host Key 已固定，`sshd -t` 通过；Include 位于主配置第 12 行；两组来源上下文的有效策略一致；`write_operations_performed=false`。
-- PHP 自动化：161 passed，0 failed。
+- PHP 自动化：162 passed，0 failed；SSH/部署专项 32 passed，0 failed。
 - PHP lint：123 个文件通过；Composer strict validation 与优化 autoload 检查通过。
 - Vue/Vitest：30 passed；TypeScript 与 Vite production build 通过。
 - Host Key 回归覆盖：扫描超时/空结果、有界重试、管理员固定 key 回退、非空错误 key fail closed。
 - 动态来源回归覆盖：每会话字段和 context hash 一致性、签名证据篡改拒绝、账号专用策略不含 Address/CIDR。
-- 隔离真实 OpenSSH：`SKIP`，本机未安装 Docker；静态与模拟测试不能替代未来服务器行为验收。
+- 隔离真实 OpenSSH harness 已覆盖 wrapper → probe 真实执行、合法/非法 `SSH_CONNECTION`、context hash、恶意 stdin 和环境清理；本机未安装 Docker 时必须以退出码 77 明确 `SKIP`，不能用 Mock 结果替代。
 - MariaDB：本阶段没有数据库或迁移变更，未连接数据库。
 
 完整安装、reload、功能测试与逐步回退见 `PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md`。所有 Linux 写入继续需要单独授权。

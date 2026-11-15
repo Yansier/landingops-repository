@@ -11,7 +11,7 @@ final class SshEnvironmentCollector
         'protocol_version', 'command_policy_id', 'probe_scope_version', 'probe_install_root', 'write_operations_performed',
         'identity_user', 'identity_uid', 'identity_gid', 'identity_group',
         'ssh_source_address', 'ssh_source_port', 'ssh_local_address', 'ssh_local_port', 'ssh_source_context_hash',
-        'os_release', 'architecture',
+        'environment_contract', 'os_release', 'architecture',
         'php_version', 'php_extensions', 'php_fpm_versions', 'php_runtime_matrix', 'nginx_version', 'nginx_vhost_capability',
         'disk', 'filesystem', 'target_state', 'installation_marker', 'parent_stat', 'ancestor_symlinks', 'acl_summary',
         'site_roots', 'site_config_count', 'site_root_declaration_count', 'site_non_absolute_root_count',
@@ -73,6 +73,7 @@ final class SshEnvironmentCollector
             && hash_equals($sourceContextHash, hash('sha256', implode('|', [
                 $sourceAddress, (string) $sourcePort, $localAddress, (string) $localPort,
             ])));
+        $environmentContractVerified = $output($probes, 'environment_contract') === 'clean';
         $siteRoots = $this->absoluteLines($output($probes, 'site_roots'));
         $siteConfigCount = $this->integer($output($probes, 'site_config_count'));
         $siteDeclarationCount = $this->integer($output($probes, 'site_root_declaration_count'));
@@ -108,6 +109,7 @@ final class SshEnvironmentCollector
                 'local_port' => $localPort,
                 'context_hash' => $sourceContextHash,
                 'verified' => $sourceContextVerified,
+                'environment_contract_verified' => $environmentContractVerified,
             ],
             'system' => [
                 'os_release' => $this->parseOsRelease($output($probes, 'os_release')),
@@ -154,6 +156,7 @@ final class SshEnvironmentCollector
         $blockers = [];
         if (!$identityMatches || $facts['identity']['is_root']) { $blockers[] = 'dedicated_non_root_identity_unverified'; }
         if (!$sourceContextVerified) { $blockers[] = 'ssh_session_context_unverified'; }
+        if (!$environmentContractVerified) { $blockers[] = 'ssh_environment_contract_unverified'; }
         if (!$targetStateSafe) { $blockers[] = 'target_directory_state_unsafe'; }
         if ($missingExtensions !== []) { $blockers[] = 'php_extensions_missing'; }
         if (($disk['available_bytes'] ?? 0) < 1073741824) { $blockers[] = 'disk_space_insufficient'; }

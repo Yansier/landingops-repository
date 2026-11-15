@@ -36,6 +36,25 @@ function Invoke-ExpectFailure([scriptblock]$Action, [string]$Label) {
     if ($LASTEXITCODE -eq 0) { throw "$Label unexpectedly succeeded." }
 }
 
+function ConvertFrom-Lo1([string[]]$Lines) {
+    $result = @{}
+    foreach ($line in $Lines) {
+        if ($line -notmatch '^LO1\t([a-z0-9_]{1,64})\t([0-9]{1,3})\t([A-Za-z0-9+/=]*)$') {
+            throw "Invalid LO1 protocol line: $line"
+        }
+        $result[$Matches[1]] = @{
+            ExitCode = [int]$Matches[2]
+            Value = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[3]))
+        }
+    }
+    return $result
+}
+
+function Get-Sha256Hex([string]$Value) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+}
+
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     & $sshKeygen -q -t ed25519 -N '' -f $privateKey -C 'landingops-audit@isolated-test'
@@ -64,6 +83,55 @@ try {
 
     $good = @(& $ssh @options 'landingops-readonly collect v2')
     if ($LASTEXITCODE -ne 0 -or (($good -join "`n") -notmatch 'LO1\tprotocol_version\t0\t')) { throw 'Fixed command handshake failed.' }
+    $goodProtocol = ConvertFrom-Lo1 $good
+    foreach ($requiredProbe in @('ssh_source_address','ssh_source_port','ssh_local_address','ssh_local_port','ssh_source_context_hash','environment_contract')) {
+        if (-not $goodProtocol.ContainsKey($requiredProbe) -or $goodProtocol[$requiredProbe].ExitCode -ne 0) {
+            throw "SSH connection probe failed: $requiredProbe"
+        }
+    }
+    $sourceAddress = $goodProtocol.ssh_source_address.Value
+    $localAddress = $goodProtocol.ssh_local_address.Value
+    $parsedAddress = $null
+    if (-not [Net.IPAddress]::TryParse($sourceAddress, [ref]$parsedAddress) -or -not [Net.IPAddress]::TryParse($localAddress, [ref]$parsedAddress)) {
+        throw 'Wrapper-to-probe chain returned an invalid connection address.'
+    }
+    $expectedContextHash = Get-Sha256Hex ($sourceAddress + '|' + $goodProtocol.ssh_source_port.Value + '|' + $localAddress + '|' + $goodProtocol.ssh_local_port.Value)
+    if ($goodProtocol.ssh_source_context_hash.Value -ne $expectedContextHash) { throw 'SSH source context hash mismatch.' }
+    if ($goodProtocol.environment_contract.Value -ne 'clean') { throw 'Unexpected environment reached the fixed probe.' }
+
+    $directConnection = '198.51.100.44 55000 192.0.2.10 22'
+    $direct = @(& $docker exec -i -u landingops-audit `
+        -e 'SSH_ORIGINAL_COMMAND=landingops-readonly collect v2' `
+        -e "SSH_CONNECTION=$directConnection" `
+        -e 'LANDINGOPS_ATTACKER=must-not-reach-probe' `
+        $container /usr/local/libexec/landingops-readonly-wrapper)
+    if ($LASTEXITCODE -ne 0) { throw 'Direct wrapper-to-probe runtime chain failed.' }
+    $directProtocol = ConvertFrom-Lo1 $direct
+    if ($directProtocol.ssh_source_address.Value -ne '198.51.100.44' `
+        -or $directProtocol.ssh_source_port.Value -ne '55000' `
+        -or $directProtocol.ssh_local_address.Value -ne '192.0.2.10' `
+        -or $directProtocol.ssh_local_port.Value -ne '22' `
+        -or $directProtocol.ssh_source_context_hash.Value -ne (Get-Sha256Hex ($directConnection.Replace(' ', '|'))) `
+        -or $directProtocol.environment_contract.Value -ne 'clean') {
+        throw 'Direct wrapper-to-probe environment contract mismatch.'
+    }
+
+    Invoke-ExpectFailure { & $docker exec -i -u landingops-audit -e 'SSH_ORIGINAL_COMMAND=landingops-readonly collect v2' $container /usr/local/libexec/landingops-readonly-wrapper | Out-Null } 'Missing SSH_CONNECTION'
+    foreach ($invalidConnection in @(
+        'not-an-ip 55000 192.0.2.10 22',
+        '198.51.100.44;id 55000 192.0.2.10 22',
+        '198.51.100.44 0 192.0.2.10 22',
+        '198.51.100.44 65536 192.0.2.10 22',
+        '198.51.100.44 55000 192.0.2.10 22 extra',
+        '198.51.100.44  55000 192.0.2.10 22'
+    )) {
+        Invoke-ExpectFailure {
+            & $docker exec -i -u landingops-audit `
+                -e 'SSH_ORIGINAL_COMMAND=landingops-readonly collect v2' `
+                -e "SSH_CONNECTION=$invalidConnection" `
+                $container /usr/local/libexec/landingops-readonly-wrapper | Out-Null
+        } 'Invalid SSH_CONNECTION'
+    }
     Invoke-ExpectFailure { & $ssh @options 'landingops-readonly collect v2; id' | Out-Null } 'Command injection'
     Invoke-ExpectFailure { & $ssh @options | Out-Null } 'Interactive shell'
     'touch /tmp/landingops-stdin-executed' | & $ssh @options 'landingops-readonly collect v2' | Out-Null
