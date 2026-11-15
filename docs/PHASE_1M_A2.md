@@ -21,11 +21,13 @@ write_operations_performed=false
 - 唯一 `.ssh/authorized_keys`，禁用外部 key command、CA 和 principals 文件；
 - `ForceCommand`、受限 authorized_keys 和 login shell 三重固定 wrapper；
 - `DisableForwarding yes`，并显式关闭 Agent/TCP/StreamLocal/X11/TTY/user RC/tunnel；
-- `PermitUserEnvironment no`、Hostbased/GSSAPI 关闭。
+- Hostbased/GSSAPI 关闭；目标 Ubuntu 24.04/OpenSSH 9.6 不允许在 `Match` 内声明 `PermitUserEnvironment`，因此片段不覆盖该字段，安装前边界审计仍强制其继承后的有效值必须为 `no`，否则阻断且不得 reload。
 
 根据 [OpenSSH sshd_config(5)](https://man.openbsd.org/sshd_config.5)，Include 通配符按词法顺序展开，命中的多个 Match 对同一字段只采用首次取得的值。因此文件名本身不能证明生效。服务器安装时必须先核对实际 Include/Match 顺序，安装片段后在 reload 前同时通过 `sshd -t` 和两组不同来源地址的 `sshd -T -C` 字段对比；任何差异立即撤回片段。
 
 2026-11-14 真实只读检查确认：主配置第 12 行是 `Include /etc/ssh/sshd_config.d/*.conf`；目录中只有 `50-cloud-init.conf`（`root:root 0600`）与 `60-cloudimg-settings.conf`（`root:root 0644`），主配置和这两个片段均没有 Match 指令。实际来源与代表性另一来源的 `sshd -T -C` 安全字段完全相同。因而 `00-landingops-audit.conf` 在当前词法顺序上没有更早的 Match 冲突；这仍不是写入许可，安装后的 `sshd -t` 与双上下文复核不可省略。
+
+2026-11-15 首次真实候选兼容诊断确认：该服务器对 `Match` 内的 `PermitUserEnvironment` 返回“不允许”并以 255 拒绝配置；候选片段已在同一受控会话中删除，原配置再次通过 `sshd -t`，未 reload。兼容修订删除片段内该行，但没有降低边界：`landingops-audit-boundary-check`、双来源 `sshd -T -C` 和安装器仍要求最终有效值精确为 `permituserenvironment no`。
 
 ## 动态来源模型
 

@@ -347,6 +347,10 @@ return [
         TestHarness::assertNotContains('Match Address', $policy);
         TestHarness::assertNotContains('49.125.', $policy);
         TestHarness::assertNotContains('PermitRootLogin', $policy);
+        TestHarness::assertNotContains('PermitUserEnvironment no', $policy);
+        $audit = (string) file_get_contents(dirname(__DIR__) . '/deploy/ssh/landingops-audit-boundary-check');
+        TestHarness::assertContains('[ "$permit_user_environment" = no ]', $audit);
+        TestHarness::assertContains('effective_permit_user_environment=', $audit);
     },
 
     'isolated openssh harness covers real protocol behavior without production targets' => static function (): void {

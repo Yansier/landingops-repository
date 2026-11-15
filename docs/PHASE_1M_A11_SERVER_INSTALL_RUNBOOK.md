@@ -52,7 +52,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 基线 `a3f6774` 后 Phase 1M-A.2 候选文件哈希如下；最终服务器操作仍必须以届时获批 Commit 重新计算并逐项匹配：
 
 ```text
-B96F9D787A26CF8CCF578976706AEDE2EAFAFA2BCF3DA825928929AB66E82F40  00-landingops-audit.conf
+BABC058C893A46527C1A431510A06FA75FD6D9B78E466B5DEC576A95A6610D02  00-landingops-audit.conf
 F6C800D6AB411EE9AD1264243F493A1944AB89836E82C46DA31BE823A81EE841  landingops-readonly-wrapper
 2F6D689ACA4DF08F242569C28EE064E6EF150D2500C877F1472AD60CAD5DD4E3  landingops-readonly-probe-v2
 C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-generate-site-summary
@@ -157,7 +157,7 @@ source_policy=session-observed
 - `AuthorizedKeysFile .ssh/authorized_keys` 且没有第二路径；
 - `AuthorizedKeysCommand none`、`TrustedUserCAKeys none`、`AuthorizedPrincipalsFile none`；
 - `ForceCommand /usr/local/libexec/landingops-readonly-wrapper`，并继续保留唯一公钥及 login shell 边界；
-- `PermitUserEnvironment no`，Hostbased/GSSAPI 关闭；
+- 继承后的 `PermitUserEnvironment no`，Hostbased/GSSAPI 关闭；目标 Ubuntu 24.04/OpenSSH 9.6 拒绝在 `Match` 内声明 `PermitUserEnvironment`，因此候选片段不覆盖该项，但双来源 `sshd -T -C` 和边界检查必须证明最终有效值仍为 `no`，否则撤回且不得 reload；
 - `DisableForwarding yes`，Agent/TCP/StreamLocal/X11/TTY/user RC/tunnel 均关闭；
 - authorized_keys 恰好一个受限 Ed25519 入口。
 

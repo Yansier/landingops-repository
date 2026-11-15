@@ -41,7 +41,7 @@ sshd -T -C user=landingops-audit,host=<source_host>,addr=<source_address>,laddr=
 - 唯一 `AuthorizedKeysFile=.ssh/authorized_keys`；
 - `AuthorizedKeysCommand=none`、`TrustedUserCAKeys=none`；
 - `ForceCommand` 固定为 wrapper，forced-command 同时由 Match、唯一公钥和 login shell 实施；
-- `PermitUserEnvironment=no`，Hostbased/GSSAPI 关闭；
+- 继承后的有效 `PermitUserEnvironment=no`，Hostbased/GSSAPI 关闭；目标 Ubuntu 24.04/OpenSSH 9.6 拒绝在 `Match` 内重复声明该字段，因此由安装前后的 `sshd -T -C` 与边界检查强制验证，非 `no` 即阻断；
 - authorized_keys 仅有一条精确受限 Ed25519 公钥；
 - 账号非 root、无附加组、密码锁定；关键文件均为预期 root owner/mode。
 
