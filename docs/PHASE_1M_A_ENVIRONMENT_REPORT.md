@@ -2,9 +2,13 @@
 
 ## 报告状态
 
-`classification: implementation_verified_real_ssh_pending`
+`classification: verified_read_only_evidence_at_observation_time`
 
-`write_operations_performed: false`
+`collector_write_operations_performed: false`
+
+`real_execution_enabled: false`
+
+`real_execution_eligible: false`
 
 ## 已有历史只读证据
 
@@ -19,24 +23,33 @@
 
 ## 本轮真实 SSH 状态
 
-`SKIP: dedicated_readonly_ssh_identity_not_provisioned`
+2026-11-15 经单独授权安装了非 root `landingops-audit` 专用身份、root-owned fixed-command 文件、唯一受限 Ed25519 公钥和账号专用 Match 片段。安装后 `sshd -t`、双来源 `sshd -T -C`、root 策略不变、第二 root 登录及 `boundary_safe=true` 全部通过。只执行一次 `systemctl reload ssh`，未 restart，未修改 root/FinalShell 公钥或全局认证策略。
 
-原因：当前已知管理员连接是 root。Phase 1M-A 新契约要求专用非 root 只读身份；仓库及本地私有配置中没有经操作者授权的该身份或凭据。为了避免把 root 固化为自动部署权限，本轮没有建立真实 SSH 会话。
+真实行为测试通过：
 
-未重新确认的项目包括：
+- 精确 `landingops-readonly collect v2` 与协议握手；
+- 动态来源 context hash 与清洁环境；
+- 恶意 stdin 不执行；
+- 交互 Shell、命令后缀、SFTP、SCP、TCP 转发与密码认证均被拒绝；
+- Agent socket 未进入 probe；
+- 受限账号不能写 wrapper、probe 或 authorized_keys。
 
-- `/srv/landingops` 及 `/srv` 当前真实状态、owner/group/mode/ACL；
-- 祖先符号链接、挂载点、文件系统类型和可用空间；
-- PHP CLI/FPM 的实际版本矩阵及扩展；
-- Nginx vhost 只读能力；
-- 26 个站点根路径与 `/srv/landingops` 的实际重叠检查；
-- MariaDB 运行二进制版本与生产数据库规划身份。
+真实签名证据观察时间为 `2026-11-15T05:44:19Z`，失效时间为 `2026-11-15T06:14:19Z`。当时确认：
 
-以上项目在可信 SSH 证据产生前均不得标记为通过。
+| 项目 | 真实只读结果 |
+| --- | --- |
+| SSH 身份 | `landingops-audit`，UID 999 / GID 988，非 root，配置身份匹配 |
+| 系统 | Ubuntu 24.04.3 LTS，x86_64 |
+| 安装根 | `/srv/landingops`，状态 absent；无祖先符号链接 |
+| 磁盘 | 总计约 362.9 GB，可用约 355.6 GB |
+| PHP CLI | 8.4.27；`json`、`openssl`、`pdo`、`pdo_mysql`、`zip` 无缺失 |
+| Nginx | 1.30.6 |
+| 站点证据 | 86 个 vhost 配置、28 个去重 root；清单完整，目标路径重叠数 0 |
+| MariaDB | 客户端 10.11.14；服务器二进制 10.11.10 |
 
-Phase 1M-A.1 已在本地完成 v2 forced-command、root-owned wrapper/probe 模板、Windows Ed25519 工具及认证边界审计，但按授权未创建账号、未安装文件、未生成摘要、未连接服务器，因此不改变本报告的真实环境结论。
+以下探针未能取得完整证据并保持阻断：`php_fpm_versions`、`nginx_vhost_capability`、`database_runtime_binary`、`baota_version`。因此原始证据分类为 `readonly_blocked`，blocker 为 `readonly_probe_incomplete`，安装计划分类为 `blocked`。历史只读 API 已知的宝塔 8.0.7 不会替代本次 SSH 探针证据。
 
-Phase 1M-A.1.1 又完成固定 `/srv/landingops` probe scope、真实来源上下文审计和隔离 OpenSSH 测试工具；当前因 Docker/WSL/Windows sshd 均不可用，真实 OpenSSH 行为测试明确 SKIP，仍不改变本报告的真实环境结论。
+该证据现已过期，只能作为本次验收记录，不能直接授权 Phase 1M-B。任何未来写入前必须重新 collect/verify，并继续保持 `real_execution_enabled=false` 直至获得独立审批。
 
 ## 模拟验收结论
 

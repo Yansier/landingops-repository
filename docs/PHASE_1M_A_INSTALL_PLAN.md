@@ -6,14 +6,15 @@
 - release 构建、SHA-256 manifest、最小 Web Root 和本地模拟回滚已通过自动化测试。
 - 真实写入入口仍禁用。
 - 可信 SSH 采集器固定 Host Key 和只读命令集合，不接受任意命令。
+- 专用 `landingops-audit` 已安装并通过 publickey-only、forced-command、权限边界和真实 OpenSSH 行为验收；root/FinalShell 登录保持不变。
+- 真实只读证据已确认 `/srv/landingops` 当时不存在、站点清单完整、无路径重叠、必需 PHP CLI 扩展无缺失；该短时证据现已过期，不能直接复用。
 
 ## 需要人工准备
 
-1. 审批并创建非 root `landingops-audit`，安装 root-owned v2 forced-command wrapper/probe，并写入受 `restrict` 保护的单一 Ed25519 公钥；精确清单和回退见 Phase 1M-A.1。
-2. 安装仅匹配 `landingops-audit` 的 publickey-only 片段；使用本次实际来源和另一代表来源执行 `sshd -T -C`，证明安全字段不依赖动态出口。任何差异均撤回，不修改全局认证策略。
-3. 在仓库外准备真实部署配置，同时记录已核对 SSH 指纹与对应公开 Host Key，不保存任何密码或私钥，安装根必须精确为 `/srv/landingops`。
-4. 运行一次真实 `collect`，确认 probe scope、`/srv/landingops` 状态、26 个外部站点根路径、PHP/Nginx、磁盘和数据库二进制。
-5. 对只读证据中的 blockers、pending 和过期时间进行人工复核。
+1. 补充或修正固定探针，使 `php_fpm_versions`、`nginx_vhost_capability`、`database_runtime_binary` 与 `baota_version` 能在不扩大账号权限的前提下取得可信结果；无法安全取得时继续保持 blocker。
+2. 在 Phase 1M-B 前重新生成短时站点摘要并执行新的 `collect/verify/plan`；证据必须在有效期内且与当前 Host Key、账号、路径和会话身份一致。
+3. 在仓库外保留真实部署配置，同时记录已核对 SSH 指纹与对应公开 Host Key；不保存密码或私钥，安装根继续固定为 `/srv/landingops`。
+4. 对新证据中的 blockers、pending、站点清单变化和过期时间进行人工复核。
 
 ## 必须单独授权的服务器修改
 
@@ -27,7 +28,8 @@
 
 ## 仍缺少证据
 
-- 真实 SSH 采集结果；
+- PHP-FPM 版本矩阵、Nginx vhost 能力、MariaDB 运行二进制与宝塔版本的完整固定探针证据；
+- 未过期且 blockers 已处理的新一轮真实 SSH 证据；
 - 原子切换写入实测；
 - 数据库备份恢复演练；
 - Nginx 配置测试/reload；
@@ -42,4 +44,4 @@ Phase 1M-B 只有在证据未过期、blockers 已清零、人工变更计划获
 
 `real_execution_enabled=false`
 
-`write_operations_performed=false`
+`collector_write_operations_performed=false`

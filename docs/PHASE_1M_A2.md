@@ -2,15 +2,17 @@
 
 ## 阶段边界
 
-本阶段只修改本地代码、SSH 策略候选、自动化测试与 Runbook，并执行经过授权的生产服务器只读检查。没有创建账号、目录或文件，没有修改/reload sshd，没有上传公钥，没有生成站点摘要，也没有安装 LandingOps。
+本阶段先完成本地代码、SSH 策略候选、自动化测试与 Runbook；随后在操作者单独授权下，于 2026-11-15 安装了专用 `landingops-audit` 只读审计组件并完成真实 SSH 验收。该安装没有部署 LandingOps 平台、创建客户网站或修改 Nginx/PHP-FPM、数据库、DNS、SSL 与网站文件。
 
 固定结果仍为：
 
 ```text
 real_execution_enabled=false
 real_execution_eligible=false
-write_operations_performed=false
+collector_write_operations_performed=false
 ```
+
+审计组件安装本身包含受权的账号、固定文件、账号专用 SSH 片段、一次 `systemctl reload ssh` 和短时站点摘要写入；因此不能把整个安装过程表述为零写入。`write_operations_performed=false` 仅属于固定只读 Collector 生成的证据。
 
 ## 专用 Match User 策略
 
@@ -66,13 +68,20 @@ wrapper 仍以 `env -i` 建立空环境，并继续固定 PATH、LANG、HOME、�
 
 ## 验收结果
 
-- 真实服务器只读策略检查：Host Key 已固定，`sshd -t` 通过；Include 位于主配置第 12 行；两组来源上下文的有效策略一致；`write_operations_performed=false`。
-- PHP 自动化：162 passed，0 failed；SSH/部署专项 32 passed，0 failed。
+- 真实安装与 SSH 验收：Host Key 已固定；`sshd -t`、双来源 Match 策略、root 策略不变、第二 root 登录及 `boundary_safe=true` 均通过；只执行一次 `systemctl reload ssh`，未 restart。
+- 行为测试：精确 fixed-command、会话 context hash、清洁环境、恶意 stdin、Shell/命令注入、SFTP/SCP、TCP 转发、Agent 转发、密码认证及固定文件不可写测试全部通过。
+- 真实 Collector：`verified_read_only_evidence` 已生成并完成 verify；安装根固定为 `/srv/landingops`，当时状态为 absent；站点清单完整且未发现与目标路径重叠。
+- 环境摘要：Ubuntu 24.04.3 LTS / x86_64；PHP CLI 8.4.27 且必需扩展无缺失；Nginx 1.30.6；MariaDB 客户端为 10.11.14，服务器二进制为 10.11.10。
+- 保守阻断：`php_fpm_versions`、`nginx_vhost_capability`、`database_runtime_binary`、`baota_version` 探针 unavailable，因此证据分类为 `readonly_blocked`、计划为 `blocked`；历史宝塔 8.0.7 事实没有被冒充为本次 SSH 探针结果。
+- PHP 自动化：164 passed，0 failed。
 - PHP lint：123 个文件通过；Composer strict validation 与优化 autoload 检查通过。
 - Vue/Vitest：30 passed；TypeScript 与 Vite production build 通过。
 - Host Key 回归覆盖：扫描超时/空结果、有界重试、管理员固定 key 回退、非空错误 key fail closed。
 - 动态来源回归覆盖：每会话字段和 context hash 一致性、签名证据篡改拒绝、账号专用策略不含 Address/CIDR。
 - 隔离真实 OpenSSH harness 已覆盖 wrapper → probe 真实执行、合法/非法 `SSH_CONNECTION`、context hash、恶意 stdin 和环境清理；本机未安装 Docker 时必须以退出码 77 明确 `SKIP`，不能用 Mock 结果替代。
-- MariaDB：本阶段没有数据库或迁移变更，未连接数据库。
+- MariaDB：本阶段没有数据库或迁移变更，未连接生产数据库。
+- 实际提交：`0fd227f` 补全 OpenSSH 私钥选择；`41e2e82` 增加脱敏协议结构诊断；`a79ba71` 修复空探针正文尾部分隔符解析。
+
+本次签名证据为短时证据，观察时间 `2026-11-15T05:44:19Z`、失效时间 `2026-11-15T06:14:19Z`。它证明当时真实验收完成，但失效后不得用于 Phase 1M-B 写入许可；未来必须重新 collect/verify。
 
 完整安装、reload、功能测试与逐步回退见 `PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md`。所有 Linux 写入继续需要单独授权。

@@ -225,3 +225,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-RemoteEnvir
 - SSH 行为测试失败：先撤销审计公钥，不修改 root 登录，不 reload SSH。
 
 整个回退不修改 root/FinalShell authorized_keys，不删除网站文件，不 reload Nginx/PHP-FPM，不操作数据库、DNS 或防火墙。
+
+## 10. 2026-11-15 真实执行记录
+
+经操作者单独授权，本 Runbook 已在固定目标上完成执行：
+
+- Host Key 使用管理员预置 ED25519 公钥及 SHA-256 指纹严格验证；有界 `ssh-keyscan` 为空时没有 TOFU。
+- 账号、组、四个 root-owned 文件、唯一 authorized_keys、账号专用 Match 片段及短时站点摘要均按门禁安装。
+- reload 前后 `sshd -t`、双来源策略、root 策略不变、第二 root 登录与 `boundary_safe=true` 均通过；仅执行一次 `systemctl reload ssh`，未 restart。
+- fixed-command、context hash、环境隔离、恶意 stdin、Shell/命令注入、SFTP/SCP、TCP 转发、Agent、密码认证和文件不可写测试全部通过。
+- 真实 `collect/verify/plan` 成功生成签名证据；Collector 本身 `write_operations_performed=false`，平台 `real_execution_enabled=false`、`real_execution_eligible=false`。
+- 证据因四个只读探针 unavailable 而保持 `readonly_probe_incomplete`，计划为 `blocked`。证据已过期，未来 Phase 1M-B 前必须重新采集。
+
+执行过程中发现并修复了三个本地兼容问题：OpenSSH 私钥文件未传给 PHP Transport、空 probe payload 的末尾制表符被 `trim()` 删除、端口转发负向测试只检查进程状态而未实际验证远端 banner。所有失败运行均触发回退；最终成功运行未触发回退。
