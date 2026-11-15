@@ -36,6 +36,7 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
         $host = (string) $target['ssh_host'];
         $port = (int) $target['ssh_port'];
         $expectedFingerprint = (string) $target['ssh_host_fingerprint'];
+        $privateKeyPath = $this->privateKeyPath($config);
         $matched = $this->resolveHostKey(
             $host,
             $port,
@@ -67,6 +68,8 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
                 '-o', 'PasswordAuthentication=no',
                 '-o', 'KbdInteractiveAuthentication=no',
                 '-o', 'PreferredAuthentications=publickey',
+                '-o', 'IdentitiesOnly=yes',
+                '-i', $privateKeyPath,
                 '-o', 'ConnectTimeout=10',
                 '-o', 'ConnectionAttempts=1',
                 '-o', 'ServerAliveInterval=5',
@@ -106,6 +109,27 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
                 'supported_install_root' => self::FIXED_INSTALL_ROOT,
             ]);
         }
+    }
+
+    private function privateKeyPath(DeploymentConfig $config): string
+    {
+        $environmentName = $config->all()['credentials']['ssh_private_key_env'] ?? null;
+        if (!is_string($environmentName) || preg_match('/^[A-Z][A-Z0-9_]{2,127}$/D', $environmentName) !== 1) {
+            throw new DeploymentException('ssh_private_key_reference_invalid', 'SSH 私钥环境引用无效；未建立远端会话。');
+        }
+        $configuredPath = getenv($environmentName);
+        if (!is_string($configuredPath) || $configuredPath === '' || str_contains($configuredPath, "\0")
+            || str_contains($configuredPath, "\r") || str_contains($configuredPath, "\n")) {
+            throw new DeploymentException('ssh_private_key_missing', '缺少 SSH 私钥文件引用；未建立远端会话。');
+        }
+        if (!is_file($configuredPath) || is_link($configuredPath)) {
+            throw new DeploymentException('ssh_private_key_unsafe', 'SSH 私钥路径不是本地普通文件或属于符号链接；未建立远端会话。');
+        }
+        $resolved = realpath($configuredPath);
+        if (!is_string($resolved) || $resolved === '' || !is_file($resolved)) {
+            throw new DeploymentException('ssh_private_key_unsafe', '无法确认 SSH 私钥文件身份；未建立远端会话。');
+        }
+        return $resolved;
     }
 
     /** @return array{line:string,type:string,source:string} */

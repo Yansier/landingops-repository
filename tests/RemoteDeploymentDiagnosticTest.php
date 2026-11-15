@@ -106,6 +106,18 @@ function phase1mCollect(array $session, ?array $configData = null, ?\DateTimeImm
     );
 }
 
+function phase1mWithTestPrivateKey(\Closure $callback): mixed
+{
+    $name = 'LANDINGOPS_DEPLOY_SSH_PRIVATE_KEY';
+    $previous = getenv($name);
+    putenv($name . '=' . __FILE__);
+    try {
+        return $callback();
+    } finally {
+        $previous === false ? putenv($name) : putenv($name . '=' . $previous);
+    }
+}
+
 /** @return array<string,\Closure> */
 return [
     'open ssh transport requests only the versioned fixed command with empty stdin' => static function (): void {
@@ -114,9 +126,10 @@ return [
         TestHarness::assertContains('StrictHostKeyChecking=yes', $source);
         TestHarness::assertContains('self::REMOTE_COMMAND', $source);
         TestHarness::assertContains('$this->run($command, null', $source);
-        foreach (['ClearAllForwardings=yes', 'ForwardAgent=no', 'RequestTTY=no', 'PermitLocalCommand=no', 'PasswordAuthentication=no', 'KbdInteractiveAuthentication=no'] as $option) {
+        foreach (['ClearAllForwardings=yes', 'ForwardAgent=no', 'RequestTTY=no', 'PermitLocalCommand=no', 'PasswordAuthentication=no', 'KbdInteractiveAuthentication=no', 'IdentitiesOnly=yes'] as $option) {
             TestHarness::assertContains($option, $source);
         }
+        TestHarness::assertContains("'-i', \$privateKeyPath", $source);
         TestHarness::assertNotContains("'sh', '-s'", $source);
         TestHarness::assertNotContains('probeScript', $source);
     },
@@ -145,9 +158,12 @@ return [
                 return ['exit_code' => 0, 'stdout' => $target['ssh_host'] . ' ' . $target['ssh_host_public_key'] . "\n", 'timed_out' => false];
             }
             TestHarness::assertSame('fake-ssh', $command[0]);
+            $identityIndex = array_search('-i', $command, true);
+            TestHarness::assertTrue(is_int($identityIndex));
+            TestHarness::assertSame(realpath(__FILE__), $command[$identityIndex + 1] ?? null);
             return ['exit_code' => 0, 'stdout' => $protocol, 'timed_out' => false];
         };
-        $session = (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config);
+        $session = phase1mWithTestPrivateKey(static fn (): array => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config));
         TestHarness::assertSame(3, $scanCalls);
         TestHarness::assertSame('live_scan_plus_strict_known_hosts', $session['host_key_verification_source']);
     },
@@ -181,7 +197,7 @@ return [
             TestHarness::assertFalse(in_array('StrictHostKeyChecking=no', $command, true));
             return ['exit_code' => 0, 'stdout' => $protocol, 'timed_out' => false];
         };
-        $session = (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config);
+        $session = phase1mWithTestPrivateKey(static fn (): array => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config));
         TestHarness::assertSame(3, $scanCalls);
         TestHarness::assertContains($target['ssh_host_public_key'], $knownHosts);
         TestHarness::assertSame('administrator_pinned_key_plus_strict_known_hosts', $session['host_key_verification_source']);
@@ -194,11 +210,34 @@ return [
             $scanCalls++;
             return ['exit_code' => 0, 'stdout' => '192.0.2.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFJvbmdIb3N0S2V5TWF0ZXJpYWwwMTIzNDU2Nzg5MA==', 'timed_out' => false];
         };
-        TestHarness::assertSame('ssh_host_key_mismatch', TestHarness::assertThrows(
+        $exception = phase1mWithTestPrivateKey(static fn (): \Throwable => TestHarness::assertThrows(
             static fn () => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config),
             DeploymentException::class,
-        )->errorCode);
+        ));
+        TestHarness::assertSame('ssh_host_key_mismatch', $exception->errorCode);
         TestHarness::assertSame(1, $scanCalls);
+    },
+
+    'open ssh transport fails before network access when private key reference is missing' => static function (): void {
+        $name = 'LANDINGOPS_DEPLOY_SSH_PRIVATE_KEY';
+        $previous = getenv($name);
+        putenv($name);
+        $calls = 0;
+        $runner = static function () use (&$calls): array {
+            $calls++;
+            return ['exit_code' => 0, 'stdout' => '', 'timed_out' => false];
+        };
+        try {
+            $exception = TestHarness::assertThrows(
+                static fn () => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))
+                    ->collect(DeploymentConfig::fromArray(phase1mConfigData())),
+                DeploymentException::class,
+            );
+            TestHarness::assertSame('ssh_private_key_missing', $exception->errorCode);
+            TestHarness::assertSame(0, $calls);
+        } finally {
+            $previous === false ? putenv($name) : putenv($name . '=' . $previous);
+        }
     },
 
     'forced command policy rejects injection scp sftp tty and protocol variants' => static function (): void {
