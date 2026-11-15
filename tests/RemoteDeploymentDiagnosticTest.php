@@ -148,6 +148,7 @@ return [
         ] as $name => $value) {
             $protocol .= "LO1\t{$name}\t0\t" . base64_encode($value) . "\n";
         }
+        $protocol .= "LO1\tbaota_version\t3\t\n";
         $runner = static function (array $command, ?string $stdin, int $timeout) use (&$scanCalls, $target, $protocol): array {
             TestHarness::assertSame(null, $stdin);
             if ($command[0] === 'fake-keyscan') {
@@ -166,6 +167,8 @@ return [
         $session = phase1mWithTestPrivateKey(static fn (): array => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 3, 0, $runner))->collect($config));
         TestHarness::assertSame(3, $scanCalls);
         TestHarness::assertSame('live_scan_plus_strict_known_hosts', $session['host_key_verification_source']);
+        TestHarness::assertSame(3, $session['probes']['baota_version']['exit_code']);
+        TestHarness::assertSame('', $session['probes']['baota_version']['stdout']);
     },
 
     'administrator pinned host key is used only after bounded empty scans and remains strict' => static function (): void {

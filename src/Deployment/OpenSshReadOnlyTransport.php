@@ -187,7 +187,7 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
     private function parseProtocol(string $stdout): array
     {
         $probes = [];
-        foreach (preg_split('/\R/', trim($stdout)) ?: [] as $index => $line) {
+        foreach (preg_split('/\R/', rtrim($stdout, "\r\n")) ?: [] as $index => $line) {
             $parts = explode("\t", $line, 4);
             $reason = match (true) {
                 count($parts) !== 4 => 'field_count',
