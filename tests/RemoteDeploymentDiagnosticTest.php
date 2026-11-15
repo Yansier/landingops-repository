@@ -240,6 +240,25 @@ return [
         }
     },
 
+    'invalid ssh probe protocol exposes only structural diagnostics' => static function (): void {
+        $runner = static function (array $command): array {
+            if ($command[0] === 'fake-keyscan') {
+                return ['exit_code' => 1, 'stdout' => '', 'timed_out' => false];
+            }
+            return ['exit_code' => 0, 'stdout' => "sensitive server banner text\n", 'timed_out' => false];
+        };
+        $exception = phase1mWithTestPrivateKey(static fn (): \Throwable => TestHarness::assertThrows(
+            static fn () => (new OpenSshReadOnlyTransport('fake-ssh', 'fake-keyscan', 30, 1, 0, $runner))
+                ->collect(DeploymentConfig::fromArray(phase1mConfigData())),
+            DeploymentException::class,
+        ));
+        TestHarness::assertSame('ssh_probe_protocol_invalid', $exception->errorCode);
+        TestHarness::assertSame('field_count', $exception->details['reason'] ?? null);
+        TestHarness::assertSame('other', $exception->details['prefix_kind'] ?? null);
+        TestHarness::assertSame(1, $exception->details['line_index'] ?? null);
+        TestHarness::assertNotContains('sensitive server banner text', json_encode($exception->details, JSON_THROW_ON_ERROR));
+    },
+
     'forced command policy rejects injection scp sftp tty and protocol variants' => static function (): void {
         $policy = new ForcedCommandPolicy();
         TestHarness::assertTrue($policy->authorize('landingops-readonly collect v2'));

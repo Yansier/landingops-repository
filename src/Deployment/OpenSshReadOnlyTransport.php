@@ -187,19 +187,41 @@ final class OpenSshReadOnlyTransport implements SshReadOnlyTransport
     private function parseProtocol(string $stdout): array
     {
         $probes = [];
-        foreach (preg_split('/\R/', trim($stdout)) ?: [] as $line) {
+        foreach (preg_split('/\R/', trim($stdout)) ?: [] as $index => $line) {
             $parts = explode("\t", $line, 4);
-            if (count($parts) !== 4 || $parts[0] !== 'LO1' || preg_match('/^[a-z0-9_]{1,64}$/D', $parts[1]) !== 1
-                || preg_match('/^\d{1,3}$/D', $parts[2]) !== 1 || isset($probes[$parts[1]])) {
-                throw new DeploymentException('ssh_probe_protocol_invalid', 'SSH 只读响应不符合固定探针协议。');
+            $reason = match (true) {
+                count($parts) !== 4 => 'field_count',
+                $parts[0] !== 'LO1' => 'prefix',
+                preg_match('/^[a-z0-9_]{1,64}$/D', $parts[1]) !== 1 => 'probe_name',
+                preg_match('/^\d{1,3}$/D', $parts[2]) !== 1 => 'exit_code',
+                isset($probes[$parts[1]]) => 'duplicate_probe',
+                default => null,
+            };
+            if (is_string($reason)) {
+                throw new DeploymentException('ssh_probe_protocol_invalid', 'SSH 只读响应不符合固定探针协议。', $this->protocolDiagnostic($line, $index, $parts, $reason));
             }
             $decoded = base64_decode($parts[3], true);
             if (!is_string($decoded) || strlen($decoded) > 65536) {
-                throw new DeploymentException('ssh_probe_protocol_invalid', 'SSH 只读探针响应无效或过大。');
+                throw new DeploymentException('ssh_probe_protocol_invalid', 'SSH 只读探针响应无效或过大。', $this->protocolDiagnostic($line, $index, $parts, 'payload'));
             }
             $probes[$parts[1]] = ['exit_code' => (int) $parts[2], 'stdout' => $decoded, 'timed_out' => false];
         }
         return $probes;
+    }
+
+    /** @param list<string> $parts @return array<string,int|string|null> */
+    private function protocolDiagnostic(string $line, int $index, array $parts, string $reason): array
+    {
+        $probe = $parts[1] ?? null;
+        return [
+            'reason' => $reason,
+            'line_index' => $index + 1,
+            'line_length' => strlen($line),
+            'field_count' => count($parts),
+            'prefix_kind' => str_starts_with($line, "LO1\t") ? 'lo1' : 'other',
+            'probe' => is_string($probe) && preg_match('/^[a-z0-9_]{1,64}$/D', $probe) === 1 ? $probe : null,
+            'line_fingerprint' => substr(hash('sha256', $line), 0, 16),
+        ];
     }
 
     /** @param array<string,array{exit_code:int,stdout:string,timed_out:bool}> $probes */
