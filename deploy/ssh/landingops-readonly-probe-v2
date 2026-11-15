@@ -50,7 +50,7 @@ ssh_source_context_hash() {
 }
 environment_contract() {
     unexpected=$(/usr/bin/env | /usr/bin/awk -F= '
-        $1!="PATH" && $1!="LANG" && $1!="LC_ALL" && $1!="HOME" && $1!="SSH_CONNECTION" && $1!="PWD" {print $1}
+        $1!="PATH" && $1!="LANG" && $1!="LC_ALL" && $1!="HOME" && $1!="SSH_CONNECTION" && $1!="PWD" && $1!="SHLVL" && $1!="_" {print $1}
     ' | /usr/bin/sort -u)
     if [ -n "$unexpected" ]; then
         printf '%s\n' "$unexpected"

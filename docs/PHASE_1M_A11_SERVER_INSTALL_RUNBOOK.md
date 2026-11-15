@@ -54,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 ```text
 BABC058C893A46527C1A431510A06FA75FD6D9B78E466B5DEC576A95A6610D02  00-landingops-audit.conf
 F6C800D6AB411EE9AD1264243F493A1944AB89836E82C46DA31BE823A81EE841  landingops-readonly-wrapper
-2F6D689ACA4DF08F242569C28EE064E6EF150D2500C877F1472AD60CAD5DD4E3  landingops-readonly-probe-v2
+0C7623F8E6861195F3A37F679A38FEFEB682AB1760E9EB02A5284DCBF02A1C77  landingops-readonly-probe-v2
 C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-generate-site-summary
 0F0D11038BCCE708BB37E9C38DE8EE7BFBF2FCD56851EAB39705E936D040B8E5  landingops-audit-boundary-check
 ```
@@ -188,7 +188,7 @@ stat -Lc '%U|%G|%a|%n' /var/lib/landingops-audit/site-roots.snapshot
 6. 恶意 stdin 不产生服务器文件；
 7. 缺失、非法 IP、异常端口、多余字段或多空格的 `SSH_CONNECTION` 均被 wrapper 拒绝；
 8. 合法 `SSH_CONNECTION` 的来源字段和 context hash 一致；
-9. 除固定变量和 `SSH_CONNECTION` 外，客户端/调用方环境不进入 probe；
+9. 除固定变量和 `SSH_CONNECTION` 外，客户端/调用方环境不进入 probe；Ubuntu `/bin/sh` 在 `env -i` 后自行生成的 `PWD`、`SHLVL`、`_` 属于固定运行时白名单，任何其他变量名称仍须拒绝；
 10. 密码/键盘交互认证失败；
 11. 账号无法写 wrapper、probe、authorized_keys。
 

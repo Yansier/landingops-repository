@@ -43,7 +43,7 @@ source_policy=session-observed
 
 wrapper 仍以 `env -i` 建立空环境，并继续固定 PATH、LANG、HOME、命令、probe 路径、超时和 stdin `/dev/null`。在清空前只读取 OpenSSH 提供的 `SSH_CONNECTION`，要求它恰好由四个单空格分隔字段组成；两个地址必须能被 `ipaddress` 解析且不是 unspecified，两个端口必须是无前导零的 1–65535 十进制数。缺失、制表符/多空格、额外字段、非法 IP 或端口均以退出码 68 fail closed。
 
-验证成功后只把原始 `SSH_CONNECTION` 加入 probe 环境。`SSH_ORIGINAL_COMMAND`、Agent、DISPLAY、客户端自定义环境及其他变量不会被传递。probe 的 `environment_contract` 进一步验证运行环境只有固定白名单变量和 shell 自建的 `PWD`。
+验证成功后只把原始 `SSH_CONNECTION` 加入 probe 环境。`SSH_ORIGINAL_COMMAND`、Agent、DISPLAY、客户端自定义环境及其他变量不会被传递。probe 的 `environment_contract` 进一步验证运行环境只有固定白名单变量及 Ubuntu `/bin/sh` 在 `env -i` 后自行建立的 `PWD`、`SHLVL`、`_`；真实预检查已确认后两者由 shell 产生，其他名称仍全部拒绝。
 
 ## Host Key 获取与固定
 

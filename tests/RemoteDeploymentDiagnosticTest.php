@@ -234,6 +234,7 @@ return [
         TestHarness::assertContains("emit_value probe_scope_version 'landingops-install-scope/1'", $probe);
         TestHarness::assertContains('emit_value probe_install_root "$INSTALL_ROOT"', $probe);
         TestHarness::assertContains("emit_value write_operations_performed 'false'", $probe);
+        TestHarness::assertContains('$1!="SHLVL" && $1!="_"', $probe);
         TestHarness::assertContains("SITE_SNAPSHOT='/var/lib/landingops-audit/site-roots.snapshot'", $probe);
         foreach (['eval ', 'sh -c', 'bash -c', 'sudo ', 'systemctl ', 'nginx -s', 'mysql -e', 'scp ', 'sftp '] as $forbidden) {
             TestHarness::assertNotContains($forbidden, $probe);
