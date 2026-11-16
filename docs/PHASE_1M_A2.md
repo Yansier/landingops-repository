@@ -84,4 +84,6 @@ wrapper 仍以 `env -i` 建立空环境，并继续固定 PATH、LANG、HOME、�
 
 本次签名证据为短时证据，观察时间 `2026-11-15T05:44:19Z`、失效时间 `2026-11-15T06:14:19Z`。它证明当时真实验收完成，但失效后不得用于 Phase 1M-B 写入许可；未来必须重新 collect/verify。
 
+四项 unavailable 的真实根因和本地兼容修复已在 2026-11-16 的 [Phase 1M-A.3](PHASE_1M_A3.md) 中完成；本文件保留当时服务器旧组件的验收事实。服务器更新仍待独立授权，不能回写本节历史结果。
+
 完整安装、reload、功能测试与逐步回退见 `PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md`。所有 Linux 写入继续需要单独授权。

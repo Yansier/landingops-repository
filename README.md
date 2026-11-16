@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1M-A.2（真实 SSH 策略适配与安装准备）**。v2 probe 与固定 `/srv/landingops` scope 已绑定；动态来源仅作为每次会话证据，专用 Match User 策略和管理员固定 Host Key 回退已准备。真实账号、服务器文件和 sshd 修改仍未执行，服务器写入继续禁用。
+> 当前状态：**Phase 1M-A.3（四项真实只读阻断已完成根因定位，本地兼容修复待服务器更新授权）**。专用审计账号和 fixed-command 已完成真实验收；本轮没有更新服务器 probe/摘要生成器，也没有安装 LandingOps。`real_execution_enabled=false`。
 
 ## 最重要的边界
 
@@ -46,6 +46,7 @@ LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行
 | [Phase 1M-A.1.1 最终兼容性修复](docs/PHASE_1M_A11.md) | 固定安装根证据、真实来源 SSH 审计、隔离 OpenSSH 测试状态与验收结果 |
 | [Phase 1M-A.1.1 服务器安装 Runbook](docs/PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md) | 固定 probe scope、来源感知认证审计、分步安装/停止/回退与首次 collect/verify/plan |
 | [Phase 1M-A.2 SSH 策略适配](docs/PHASE_1M_A2.md) | 专用 Match User、动态来源会话证据、Host Key 有界重试与最终安装停止条件 |
+| [Phase 1M-A.3 四项阻断修复](docs/PHASE_1M_A3.md) | PHP-FPM、Nginx vhost、MariaDB 运行二进制与宝塔版本的真实根因、脱敏摘要 v2 和待授权更新/回退计划 |
 
 纯契约示例位于 `docs/examples/`，不能作为生产配置或真实凭据使用。
 

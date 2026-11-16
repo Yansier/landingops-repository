@@ -174,7 +174,7 @@ source_policy=session-observed
 stat -Lc '%U|%G|%a|%n' /var/lib/landingops-audit/site-roots.snapshot
 ```
 
-预期：`root:landingops-audit 0440`，schema 为 `landingops-site-roots/1`，生成时间不超过五分钟。生成器只提取 root 路径和完整性计数，不复制 vhost 内容。任何不可读文件、符号链接或异常计数将使后续证据 fail closed。
+最新候选预期：`root:landingops-audit 0440`，schema 为 `landingops-environment-summary/2`、生成器为 `phase1ma3/1`、文件不超过 64 KiB且生成时间不超过五分钟。除 root 路径与完整性计数外，生成器只增加固定 vhost 目录元数据、严格 allowlist 中 MariaDB 运行二进制首行版本和固定来源宝塔版本；不复制 vhost 正文、数据库配置或网站业务文件。旧服务器仍是 v1 schema，只有在 Phase 1M-A.3 组件更新获独立授权后才能按本段验收。任何不可读文件、符号链接、异常计数、未知二进制、重复版本赋值或字段缺失均使后续证据 fail closed。
 
 ## 7. 强制认证行为测试
 
@@ -238,3 +238,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-RemoteEnvir
 - 证据因四个只读探针 unavailable 而保持 `readonly_probe_incomplete`，计划为 `blocked`。证据已过期，未来 Phase 1M-B 前必须重新采集。
 
 执行过程中发现并修复了三个本地兼容问题：OpenSSH 私钥文件未传给 PHP Transport、空 probe payload 的末尾制表符被 `trim()` 删除、端口转发负向测试只检查进程状态而未实际验证远端 banner。所有失败运行均触发回退；最终成功运行未触发回退。
+
+## 11. Phase 1M-A.3 两文件更新（待独立授权）
+
+本步骤不是初次账号安装，也不修改 SSH 配置。服务器当前旧哈希与候选新哈希必须精确匹配 Phase 1M-A.3 文档；仅更新：
+
+- `/usr/local/libexec/landingops-readonly-probe-v2`（`root:root 0755`）；
+- `/usr/local/libexec/landingops-generate-site-summary`（`root:root 0700`）。
+
+wrapper、boundary checker、Match 片段、账号、公钥和权限均不变。更新前在 root 私有目录保存两个旧文件及旧摘要的哈希匹配备份；对候选执行 SHA-256 和 `sh -n`。更新后不 reload/restart 任何服务，只运行一次生成器、核对 v2 摘要元数据、执行 `boundary_safe=true`，再进行 collect/verify/plan。
+
+```text
+# 服务器当前旧版本
+0C7623F8E6861195F3A37F679A38FEFEB682AB1760E9EB02A5284DCBF02A1C77  landingops-readonly-probe-v2
+C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-generate-site-summary
+
+# Phase 1M-A.3 本地候选
+009B4070968D144305AB820B5989050902B76A29E997431DF4D9E4C41467DAC9  landingops-readonly-probe-v2
+522D86B164261E52482EA51FCFF84E13EFCB79F3225BEACF0AB56B5DCAC8A477  landingops-generate-site-summary
+```
+
+停止条件：旧哈希不匹配、目标为链接、候选哈希不匹配、语法失败、摘要字段/权限/时效异常、boundary 非安全、root/FinalShell 异常或四项任一 probe 非零。回退只恢复两个已备份且身份明确的旧文件，并删除或恢复本次新摘要；不触碰其他文件，也不 reload SSH/Nginx/PHP-FPM/MariaDB。

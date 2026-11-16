@@ -77,14 +77,26 @@ php_extensions() {
     return 127
 }
 php_fpm_versions() {
-    found=0
-    for executable in /usr/sbin/php-fpm* /www/server/php/*/sbin/php-fpm; do
-        [ -x "$executable" ] || continue
-        found=1
+    candidates=$(
+        {
+            if [ -d /usr/sbin ]; then
+                /usr/bin/find /usr/sbin -xdev -mindepth 1 -maxdepth 1 -type f -name 'php-fpm*' -perm /111 2>/dev/null
+            fi
+            if [ -d /www/server/php ]; then
+                /usr/bin/find /www/server/php -xdev -mindepth 3 -maxdepth 3 -type f -path '/www/server/php/*/sbin/php-fpm' -perm /111 2>/dev/null
+            fi
+        } | /usr/bin/sort -u
+    )
+    [ -n "$candidates" ] || return 1
+    printf '%s\n' "$candidates" | while IFS= read -r executable; do
+        case "$executable" in
+            /usr/sbin/php-fpm*|/www/server/php/[0-9][0-9]/sbin/php-fpm) ;;
+            *) return 3 ;;
+        esac
+        [ -x "$executable" ] || return 3
         printf '%s|' "$executable"
         "$executable" -v 2>&1 | /usr/bin/head -n 1
     done
-    [ "$found" -eq 1 ]
 }
 php_runtime_matrix() {
     found=0
@@ -103,10 +115,10 @@ nginx_version() {
     fi
 }
 nginx_vhost_capability() {
-    if [ -d /www/server/panel/vhost/nginx ]; then printf '%s\n' 'baota-vhost-directory-present'
-    elif [ -d /etc/nginx/sites-available ]; then printf '%s\n' 'nginx-sites-available-present'
-    else return 2
-    fi
+    snapshot_ready || return 3
+    [ "$(snapshot_field vhost_directory_present)" = true ] || return 2
+    [ "$(snapshot_field vhost_directory_stat)" = 'root|root|600|directory' ] || return 3
+    printf '%s\n' 'baota-vhost-directory-present-via-root-summary'
 }
 disk() { /usr/bin/df -Pk -- "$INSTALL_PARENT" | /usr/bin/awk 'NR==2 {print $2 " " $4}'; }
 filesystem() {
@@ -143,7 +155,10 @@ snapshot_field() { /usr/bin/awk -F= -v key="$1" '$1==key {print substr($0,length
 snapshot_ready() {
     [ -f "$SITE_SNAPSHOT" ] && [ ! -L "$SITE_SNAPSHOT" ] || return 1
     [ "$(/usr/bin/stat -Lc '%U|%G|%a' -- "$SITE_SNAPSHOT")" = 'root|landingops-audit|440' ] || return 1
-    [ "$(snapshot_field schema_version)" = 'landingops-site-roots/1' ] || return 1
+    size=$(/usr/bin/stat -Lc '%s' -- "$SITE_SNAPSHOT") || return 1
+    [ "$size" -gt 0 ] && [ "$size" -le 65536 ] || return 1
+    [ "$(snapshot_field schema_version)" = 'landingops-environment-summary/2' ] || return 1
+    [ "$(snapshot_field generator_version)" = 'phase1ma3/1' ] || return 1
     generated=$(snapshot_field generated_epoch)
     now=$(/usr/bin/date +%s)
     case "$generated" in ''|*[!0-9]*) return 1;; esac
@@ -169,14 +184,23 @@ database_server_binary() {
     fi
 }
 database_runtime_binary() {
-    pid=$(/usr/bin/pgrep -xo mariadbd 2>/dev/null || /usr/bin/pgrep -xo mysqld 2>/dev/null || true)
-    [ -n "$pid" ] || return 3
-    executable=$(/usr/bin/readlink -f "/proc/$pid/exe") || return 4
-    case "$executable" in /usr/sbin/mariadbd|/usr/sbin/mysqld|/www/server/mysql/bin/mysqld) ;; *) return 5;; esac
-    [ -x "$executable" ] || return 5
-    "$executable" --version
+    snapshot_ready || return 3
+    executable=$(snapshot_field database_runtime_binary)
+    version=$(snapshot_field database_runtime_version)
+    case "$executable" in
+        /usr/sbin/mariadbd|/usr/sbin/mysqld|/www/server/mysql/bin/mariadbd|/www/server/mysql/bin/mysqld) ;;
+        *) return 4 ;;
+    esac
+    [ -n "$version" ] || return 4
+    printf '%s|%s\n' "$executable" "$version"
 }
-baota_version() { [ -r /www/server/panel/data/version.pl ] && /usr/bin/head -n 1 /www/server/panel/data/version.pl; }
+baota_version() {
+    snapshot_ready || return 3
+    [ "$(snapshot_field baota_version_source)" = '/www/server/panel/class/common.py' ] || return 4
+    version=$(snapshot_field baota_version)
+    printf '%s\n' "$version" | /usr/bin/grep -Eq '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4}$' || return 4
+    printf '%s\n' "$version"
+}
 
 emit_value protocol_version 'landingops-ssh-readonly/2'
 emit_value command_policy_id 'landingops-linux-readonly-v2'

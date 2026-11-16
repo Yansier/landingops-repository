@@ -6,7 +6,7 @@ namespace LandingOps\Deployment;
 
 final class SshEnvironmentCollector
 {
-    public const VERSION = 'phase-1m-a2/3.0';
+    public const VERSION = 'phase-1m-a3/3.1';
     private const REQUIRED_PROBES = [
         'protocol_version', 'command_policy_id', 'probe_scope_version', 'probe_install_root', 'write_operations_performed',
         'identity_user', 'identity_uid', 'identity_gid', 'identity_group',

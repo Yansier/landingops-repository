@@ -11,7 +11,7 @@
 
 ## 需要人工准备
 
-1. 补充或修正固定探针，使 `php_fpm_versions`、`nginx_vhost_capability`、`database_runtime_binary` 与 `baota_version` 能在不扩大账号权限的前提下取得可信结果；无法安全取得时继续保持 blocker。
+1. 经独立授权后，按 [Phase 1M-A.3](PHASE_1M_A3.md) 和最新 Runbook 更新固定 probe 与 root-only 摘要生成器；更新前后必须核对哈希、owner/mode、语法和回退条件。服务器当前仍运行旧版本，四项 blocker 尚未通过新的真实 collect 消除。
 2. 在 Phase 1M-B 前重新生成短时站点摘要并执行新的 `collect/verify/plan`；证据必须在有效期内且与当前 Host Key、账号、路径和会话身份一致。
 3. 在仓库外保留真实部署配置，同时记录已核对 SSH 指纹与对应公开 Host Key；不保存密码或私钥，安装根继续固定为 `/srv/landingops`。
 4. 对新证据中的 blockers、pending、站点清单变化和过期时间进行人工复核。
@@ -28,7 +28,7 @@
 
 ## 仍缺少证据
 
-- PHP-FPM 版本矩阵、Nginx vhost 能力、MariaDB 运行二进制与宝塔版本的完整固定探针证据；
+- 更新后 PHP-FPM 版本矩阵、Nginx vhost 能力、MariaDB 运行二进制与宝塔版本的同一轮短时完整探针证据；
 - 未过期且 blockers 已处理的新一轮真实 SSH 证据；
 - 原子切换写入实测；
 - 数据库备份恢复演练；

@@ -6,9 +6,11 @@ umask 077
 SOURCE='/www/server/panel/vhost/nginx'
 DESTINATION='/var/lib/landingops-audit/site-roots.snapshot'
 TEMPORARY='/var/lib/landingops-audit/.site-roots.snapshot.tmp'
+BAOTA_VERSION_SOURCE='/www/server/panel/class/common.py'
 
 [ "$(/usr/bin/id -u)" -eq 0 ] || exit 77
 [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || exit 78
+[ "$(/usr/bin/readlink -f -- "$SOURCE")" = "$SOURCE" ] || exit 78
 [ ! -L "$(/usr/bin/dirname "$DESTINATION")" ] || exit 78
 
 config_count=$(/usr/bin/find "$SOURCE" -xdev -type f -name '*.conf' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
@@ -16,15 +18,61 @@ unreadable_count=$(/usr/bin/find "$SOURCE" -xdev -type f -name '*.conf' ! -reada
 symlink_count=$(/usr/bin/find "$SOURCE" -xdev -type l -name '*.conf' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 root_declaration_count=$(/usr/bin/find "$SOURCE" -xdev -type f -name '*.conf' -readable -exec /usr/bin/awk '$1=="root" {count++} END {print count+0}' {} + | /usr/bin/awk '{sum+=$1} END {print sum+0}')
 non_absolute_root_count=$(/usr/bin/find "$SOURCE" -xdev -type f -name '*.conf' -readable -exec /usr/bin/awk '$1=="root" {gsub(/;/,"",$2); if ($2 !~ /^\//) count++} END {print count+0}' {} + | /usr/bin/awk '{sum+=$1} END {print sum+0}')
+vhost_directory_stat=$(/usr/bin/stat -Lc '%U|%G|%a|%F' -- "$SOURCE")
+
+database_runtime_binary=''
+database_runtime_version=''
+database_pid=$(/usr/bin/pgrep -xo mariadbd 2>/dev/null || /usr/bin/pgrep -xo mysqld 2>/dev/null || true)
+case "$database_pid" in
+    ''|*[!0-9]*) ;;
+    *)
+        database_candidate=$(/usr/bin/readlink -f "/proc/$database_pid/exe" 2>/dev/null || true)
+        case "$database_candidate" in
+            /usr/sbin/mariadbd|/usr/sbin/mysqld|/www/server/mysql/bin/mariadbd|/www/server/mysql/bin/mysqld)
+                if [ -x "$database_candidate" ]; then
+                    database_runtime_binary=$database_candidate
+                    database_runtime_version=$("$database_candidate" --version 2>&1 | /usr/bin/head -n 1 | /usr/bin/tr -d '\r\n')
+                fi
+                ;;
+        esac
+        ;;
+esac
+case "$database_runtime_version" in
+    *[![:print:]]*) database_runtime_binary=''; database_runtime_version='' ;;
+esac
+database_version_length=$(printf '%s' "$database_runtime_version" | /usr/bin/wc -c | /usr/bin/tr -d ' ')
+[ "$database_version_length" -le 512 ] || { database_runtime_binary=''; database_runtime_version=''; }
+
+baota_version=''
+if [ -f "$BAOTA_VERSION_SOURCE" ] && [ ! -L "$BAOTA_VERSION_SOURCE" ] && [ -r "$BAOTA_VERSION_SOURCE" ]; then
+    baota_source_size=$(/usr/bin/stat -Lc '%s' -- "$BAOTA_VERSION_SOURCE" 2>/dev/null || true)
+    case "$baota_source_size" in
+        ''|*[!0-9]*) baota_source_size=0 ;;
+    esac
+    if [ "$baota_source_size" -gt 0 ] && [ "$baota_source_size" -le 1048576 ] \
+        && [ "$(/usr/bin/readlink -f -- "$BAOTA_VERSION_SOURCE")" = "$BAOTA_VERSION_SOURCE" ]; then
+        baota_version=$(/usr/bin/python3 -c 'import re,sys; data=open(sys.argv[1],"rb").read(1048577); matches=re.findall(rb"(?m)^\s*g\.version\s*=\s*['\''\"]([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})['\''\"]\s*$",data); print(matches[0].decode("ascii")) if len(data)<=1048576 and len(matches)==1 else sys.exit(3)' "$BAOTA_VERSION_SOURCE" 2>/dev/null || true)
+    fi
+fi
+case "$baota_version" in
+    ''|*[!0-9.]*) baota_version='' ;;
+esac
 
 {
-    printf 'schema_version=landingops-site-roots/1\n'
+    printf 'schema_version=landingops-environment-summary/2\n'
+    printf 'generator_version=phase1ma3/1\n'
     printf 'generated_epoch=%s\n' "$(/usr/bin/date +%s)"
+    printf 'vhost_directory_present=true\n'
+    printf 'vhost_directory_stat=%s\n' "$vhost_directory_stat"
     printf 'config_count=%s\n' "$config_count"
     printf 'root_declaration_count=%s\n' "$root_declaration_count"
     printf 'non_absolute_root_count=%s\n' "$non_absolute_root_count"
     printf 'unreadable_count=%s\n' "$unreadable_count"
     printf 'symlink_count=%s\n' "$symlink_count"
+    printf 'database_runtime_binary=%s\n' "$database_runtime_binary"
+    printf 'database_runtime_version=%s\n' "$database_runtime_version"
+    printf 'baota_version_source=%s\n' "$BAOTA_VERSION_SOURCE"
+    printf 'baota_version=%s\n' "$baota_version"
     printf '%s\n' '--roots--'
     /usr/bin/find "$SOURCE" -xdev -type f -name '*.conf' -readable -exec /usr/bin/awk '$1=="root" {gsub(/;/,"",$2); if ($2 ~ /^\//) print $2}' {} + | /usr/bin/sort -u
 } > "$TEMPORARY"

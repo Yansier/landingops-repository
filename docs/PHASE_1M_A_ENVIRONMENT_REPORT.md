@@ -49,6 +49,12 @@
 
 以下探针未能取得完整证据并保持阻断：`php_fpm_versions`、`nginx_vhost_capability`、`database_runtime_binary`、`baota_version`。因此原始证据分类为 `readonly_blocked`，blocker 为 `readonly_probe_incomplete`，安装计划分类为 `blocked`。历史只读 API 已知的宝塔 8.0.7 不会替代本次 SSH 探针证据。
 
+## 2026-11-16 四项阻断只读复核
+
+Phase 1M-A.3 已证明：PHP-FPM 8.4.27 可由审计账号执行，旧失败来自禁用 glob 后仍使用 glob；Nginx vhost 目录为受保护的 `root:root 0600`；运行中的 MariaDB 是 `/www/server/mysql/bin/mariadbd` 10.11.10，但审计账号不能解析 `/proc/<pid>/exe`；宝塔 8.0.7 的当前固定来源是受保护的 `/www/server/panel/class/common.py`，旧 `data/version.pl` 不存在。详细退出码和证据见 [Phase 1M-A.3](PHASE_1M_A3.md)。
+
+本地已准备 root-only 脱敏摘要 v2 和 probe 兼容修复，但服务器组件尚未更新，因此不得把上述根因调查写成“四项 blocker 已在真实 collect 中消除”。必须另行批准组件更新、重新生成短时摘要，并重新 collect/verify/plan。
+
 该证据现已过期，只能作为本次验收记录，不能直接授权 Phase 1M-B。任何未来写入前必须重新 collect/verify，并继续保持 `real_execution_enabled=false` 直至获得独立审批。
 
 ## 模拟验收结论

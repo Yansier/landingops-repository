@@ -69,12 +69,12 @@ function phase1mSession(): array
             'environment_contract' => phase1mProbe('clean'),
             'os_release' => phase1mProbe("ID=ubuntu\nVERSION_ID=\"24.04\"\nPRETTY_NAME=\"Ubuntu 24.04.3 LTS\""),
             'architecture' => phase1mProbe('x86_64'),
-            'php_version' => phase1mProbe('PHP 8.3.14 (cli)'),
+            'php_version' => phase1mProbe('PHP 8.4.27 (cli)'),
             'php_extensions' => phase1mProbe("json\nopenssl\npdo\npdo_mysql\nzip"),
-            'php_fpm_versions' => phase1mProbe('/www/server/php/83/sbin/php-fpm|PHP 8.3.14'),
-            'php_runtime_matrix' => phase1mProbe('/www/server/php/83/bin/php|8.3.14|json,openssl,pdo,pdo_mysql,zip'),
+            'php_fpm_versions' => phase1mProbe('/www/server/php/84/sbin/php-fpm|PHP 8.4.27'),
+            'php_runtime_matrix' => phase1mProbe('/www/server/php/84/bin/php|8.4.27|json,openssl,pdo,pdo_mysql,zip'),
             'nginx_version' => phase1mProbe('nginx version: nginx/1.24.0'),
-            'nginx_vhost_capability' => phase1mProbe('baota-vhost-directory-present'),
+            'nginx_vhost_capability' => phase1mProbe('baota-vhost-directory-present-via-root-summary'),
             'disk' => phase1mProbe('104857600 52428800'),
             'filesystem' => phase1mProbe('ext4 /dev/vda1 / rw,relatime'),
             'target_state' => phase1mProbe('absent'),
@@ -90,7 +90,7 @@ function phase1mSession(): array
             'site_symlink_count' => phase1mProbe('0'),
             'database_client' => phase1mProbe('mariadb  Ver 15.1 Distrib 10.11.10-MariaDB'),
             'database_server_binary' => phase1mProbe('mysqld  Ver 10.11.10-MariaDB'),
-            'database_runtime_binary' => phase1mProbe('mysqld  Ver 10.11.10-MariaDB'),
+            'database_runtime_binary' => phase1mProbe('/www/server/mysql/bin/mariadbd|mariadbd  Ver 10.11.10-MariaDB-log'),
             'baota_version' => phase1mProbe('8.0.7'),
         ],
     ];
@@ -297,9 +297,52 @@ return [
         TestHarness::assertContains("emit_value write_operations_performed 'false'", $probe);
         TestHarness::assertContains('$1!="SHLVL" && $1!="_"', $probe);
         TestHarness::assertContains("SITE_SNAPSHOT='/var/lib/landingops-audit/site-roots.snapshot'", $probe);
+        TestHarness::assertContains("schema_version)\" = 'landingops-environment-summary/2'", $probe);
+        TestHarness::assertContains("generator_version)\" = 'phase1ma3/1'", $probe);
+        TestHarness::assertContains("/usr/bin/find /www/server/php -xdev", $probe);
+        TestHarness::assertContains("baota-vhost-directory-present-via-root-summary", $probe);
+        TestHarness::assertContains('snapshot_field database_runtime_version', $probe);
+        TestHarness::assertContains('printf \'%s|%s\\n\' "$executable" "$version"', $probe);
+        TestHarness::assertContains("snapshot_field baota_version", $probe);
+        TestHarness::assertNotContains('for executable in /usr/sbin/php-fpm* /www/server/php/*/sbin/php-fpm', $probe);
+        TestHarness::assertNotContains('readlink -f "/proc/$pid/exe"', $probe);
+        TestHarness::assertNotContains('/www/server/panel/data/version.pl', $probe);
         foreach (['eval ', 'sh -c', 'bash -c', 'sudo ', 'systemctl ', 'nginx -s', 'mysql -e', 'scp ', 'sftp '] as $forbidden) {
             TestHarness::assertNotContains($forbidden, $probe);
         }
+    },
+
+    'root summary exposes only bounded environment metadata for protected probes' => static function (): void {
+        $generator = (string) file_get_contents(dirname(__DIR__) . '/deploy/ssh/landingops-generate-site-summary');
+        TestHarness::assertContains("[ \"$(/usr/bin/id -u)\" -eq 0 ]", $generator);
+        TestHarness::assertContains("schema_version=landingops-environment-summary/2", $generator);
+        TestHarness::assertContains("generator_version=phase1ma3/1", $generator);
+        TestHarness::assertContains("BAOTA_VERSION_SOURCE='/www/server/panel/class/common.py'", $generator);
+        TestHarness::assertContains('/www/server/mysql/bin/mariadbd', $generator);
+        TestHarness::assertContains('baota_source_size', $generator);
+        TestHarness::assertContains('len(data)<=1048576 and len(matches)==1', $generator);
+        TestHarness::assertContains('readlink -f -- "$SOURCE"', $generator);
+        TestHarness::assertContains('vhost_directory_stat=', $generator);
+        TestHarness::assertContains('database_runtime_version=', $generator);
+        TestHarness::assertContains('baota_version=', $generator);
+        TestHarness::assertContains('/usr/bin/chown root:landingops-audit', $generator);
+        TestHarness::assertContains('/usr/bin/chmod 0440', $generator);
+        foreach (['/etc/my.cnf', 'config/config.json', 'password', 'privateKey', 'certificate'] as $forbidden) {
+            TestHarness::assertNotContains($forbidden, $generator);
+        }
+    },
+
+    'phase 1m a3 runbook pins the exact two-file update hashes' => static function (): void {
+        $root = dirname(__DIR__);
+        $runbook = (string) file_get_contents($root . '/docs/PHASE_1M_A11_SERVER_INSTALL_RUNBOOK.md');
+        $phase = (string) file_get_contents($root . '/docs/PHASE_1M_A3.md');
+        foreach (['landingops-readonly-probe-v2', 'landingops-generate-site-summary'] as $name) {
+            $hash = strtoupper((string) hash_file('sha256', $root . '/deploy/ssh/' . $name));
+            TestHarness::assertContains($hash . '  ' . $name, $runbook);
+            TestHarness::assertContains($hash . '  ' . $name, $phase);
+        }
+        TestHarness::assertContains('server_component_update_performed=false', $phase);
+        TestHarness::assertContains('需单独授权', $phase);
     },
 
     'collector refuses missing altered or failed protocol handshake' => static function (): void {
@@ -486,6 +529,9 @@ return [
         TestHarness::assertSame(26, $verified['facts']['filesystem']['site_root_count']);
         TestHarness::assertSame('/srv/landingops', $verified['facts']['filesystem']['checked_install_root']);
         TestHarness::assertSame('landingops-install-scope/1', $verified['command_policy']['probe_scope_version']);
+        TestHarness::assertSame('baota-vhost-directory-present-via-root-summary', $verified['facts']['runtime']['nginx_vhost_capability']);
+        TestHarness::assertContains('/www/server/mysql/bin/mariadbd|', (string) $verified['facts']['database']['running_server_binary_version']);
+        TestHarness::assertSame('8.0.7', $verified['facts']['baota']['version']);
         TestHarness::assertFalse($verified['real_execution_eligible']);
         TestHarness::assertFalse($verified['real_execution_enabled']);
         TestHarness::assertFalse($verified['write_operations_performed']);
