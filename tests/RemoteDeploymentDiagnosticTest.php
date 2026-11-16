@@ -341,7 +341,8 @@ return [
             TestHarness::assertContains($hash . '  ' . $name, $runbook);
             TestHarness::assertContains($hash . '  ' . $name, $phase);
         }
-        TestHarness::assertContains('server_component_update_performed=false', $phase);
+        TestHarness::assertContains('server_component_update_performed=true', $phase);
+        TestHarness::assertContains('real_execution_enabled=false', $phase);
         TestHarness::assertContains('需单独授权', $phase);
     },
 

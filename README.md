@@ -2,7 +2,7 @@
 
 LandingOps 是面向落地页的轻量部署与配置发布控制面。V1 运行在**一台现有宝塔服务器**上，通过唯一宝塔连接管理由 LandingOps 创建的站点，并通过多个 Cloudflare 连接管理获授权的 Zone 和主域名。
 
-> 当前状态：**Phase 1M-A.3（四项真实只读阻断已完成根因定位，本地兼容修复待服务器更新授权）**。专用审计账号和 fixed-command 已完成真实验收；本轮没有更新服务器 probe/摘要生成器，也没有安装 LandingOps。`real_execution_enabled=false`。
+> 当前状态：**Phase 1M-A.3（两个只读审计组件已完成受控更新，最终真实环境验收通过）**。真实 `collect/verify/plan` 无只读 blockers，分类为 `readonly_verified_with_pending_writes` / `readonly_ready_for_manual_preparation`；LandingOps 仍未安装，`real_execution_enabled=false`。
 
 ## 最重要的边界
 

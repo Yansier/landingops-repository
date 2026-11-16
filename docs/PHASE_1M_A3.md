@@ -4,7 +4,7 @@
 
 2026-11-16 已在固定 SSH Host Key、既有 root 管理会话和 `landingops-audit` forced-command 下完成只读取证。诊断没有修改服务器文件、没有 reload/restart 服务，也没有创建 `/srv/landingops`。
 
-本地最小修复已经准备，但本文件记录的服务器状态仍是“旧 probe / 旧摘要生成器已安装”。更新两个 root-owned 文件、重新生成短时摘要及重新 collect/verify/plan 均须操作者另行批准。
+本地最小修复通过源码审查后，操作者已单独授权更新两个 root-owned 只读组件。2026-11-16 更新、v2 摘要、boundary 检查及真实 collect/verify/plan 全部通过；未修改 SSH/Nginx/PHP-FPM/MariaDB 配置，未创建 `/srv/landingops`，也未安装 LandingOps。
 
 固定安全状态：
 
@@ -12,7 +12,7 @@
 real_execution_enabled=false
 real_execution_eligible=false
 diagnostic_write_operations_performed=false
-server_component_update_performed=false
+server_component_update_performed=true
 ```
 
 ## 四项真实根因
@@ -38,7 +38,7 @@ server_component_update_performed=false
 
 ## 服务器文件差异与哈希
 
-当前服务器已安装哈希：
+更新前服务器哈希：
 
 ```text
 0C7623F8E6861195F3A37F679A38FEFEB682AB1760E9EB02A5284DCBF02A1C77  landingops-readonly-probe-v2
@@ -47,9 +47,9 @@ F6C800D6AB411EE9AD1264243F493A1944AB89836E82C46DA31BE823A81EE841  landingops-rea
 0F0D11038BCCE708BB37E9C38DE8EE7BFBF2FCD56851EAB39705E936D040B8E5  landingops-audit-boundary-check (不变)
 ```
 
-本地候选哈希在提交前由自动化重新计算，并同步到最新 Runbook。只允许在服务器旧哈希精确匹配时暂存和替换前两个文件；未知内容拒绝覆盖。
+候选哈希在提交前由自动化重新计算并同步到 Runbook；实际执行时旧哈希精确匹配，未知内容覆盖门禁没有触发。
 
-本地候选哈希：
+获批并实际安装的哈希：
 
 ```text
 009B4070968D144305AB820B5989050902B76A29E997431DF4D9E4C41467DAC9  landingops-readonly-probe-v2
@@ -69,11 +69,51 @@ F6C800D6AB411EE9AD1264243F493A1944AB89836E82C46DA31BE823A81EE841  landingops-rea
 
 ## Phase 1M-B 前置条件
 
-- 两个服务器组件更新获得独立批准且更新后哈希、owner/mode、shell 语法均通过；
-- `boundary_safe=true`，root/FinalShell 登录未受影响；
-- 新短时摘要与真实 collect/verify/plan 在有效期内完成，四项 probe 均 exit `0`；
-- 站点清单仍完整、`/srv/landingops` 仍 absent、无路径重叠；
+- 两个服务器组件更新已获独立批准，更新后哈希、owner/mode、shell 语法均通过；
+- `boundary_safe=true`，新 root 登录通过，SSH 配置及既有 FinalShell 会话未被修改；
+- 新短时摘要与真实 collect/verify/plan 已完成，四项 probe 均 exit `0`；该证据过期后须重新采集；
+- 站点清单完整、`/srv/landingops` 仍 absent、无路径重叠；
 - 安装仍保留原子切换、生产数据库身份、备份恢复、Nginx/TLS 等待写入证据；
 - 获得 Phase 1M-B 独立写入授权。
 
 本阶段不会因为四项只读证据可取得而自动开放真实执行。
+
+## 真实服务器更新与最终验收记录
+
+执行时间：`2026-11-16T13:54:42Z`。严格 Host Key、服务器身份、旧哈希、owner/mode 和本地 Commit 门禁全部通过后，创建 root-only 备份目录 `/root/landingops-phase1ma3.UDvssiWh`，保存两个旧文件及旧摘要。备份哈希：
+
+```text
+0C7623F8E6861195F3A37F679A38FEFEB682AB1760E9EB02A5284DCBF02A1C77  landingops-readonly-probe-v2
+C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-generate-site-summary
+440DF018035F129D8307A085CEFC97B312D7FEA5221605A8613795539DC510A3  site-roots.snapshot
+```
+
+候选 SHA-256 和 `sh -n` 通过后，使用同目录临时文件与原子重命名更新两个文件。安装后状态：
+
+```text
+009B4070968D144305AB820B5989050902B76A29E997431DF4D9E4C41467DAC9  root:root 0755  landingops-readonly-probe-v2
+522D86B164261E52482EA51FCFF84E13EFCB79F3225BEACF0AB56B5DCAC8A477  root:root 0700  landingops-generate-site-summary
+```
+
+新摘要为 `root:landingops-audit 0440`，大小 1412 字节，检查时 age 为 0 秒；schema `landingops-environment-summary/2`，generator `phase1ma3/1`。固定来源确认 MariaDB `/www/server/mysql/bin/mariadbd` 10.11.10、Nginx vhost 元数据及 `/www/server/panel/class/common.py` 中宝塔 8.0.7。PHP-FPM 由受限账号直接执行固定 allowlist 路径取得，不由摘要代填。
+
+| Probe | Exit | 结果 |
+| --- | ---: | --- |
+| `php_fpm_versions` | 0 | `/www/server/php/84/sbin/php-fpm`，PHP-FPM 8.4.27 |
+| `nginx_vhost_capability` | 0 | `baota-vhost-directory-present-via-root-summary` |
+| `database_runtime_binary` | 0 | `/www/server/mysql/bin/mariadbd`，MariaDB 10.11.10 |
+| `baota_version` | 0 | 8.0.7 |
+
+所有 probe exit code 均为 0；`boundary_safe=true`。站点摘要包含 95 个 vhost 配置、31 个 root 声明和 31 个去重站点 root，清单完整，与 `/srv/landingops` 重叠数为 0；安装根仍为 absent。数量较 2026-11-15 的旧短时证据增加，属于本次实时重新采集结果，没有复用历史缓存。
+
+```text
+collect=readonly_verified_with_pending_writes
+verify=verified_read_only_evidence
+plan=readonly_ready_for_manual_preparation
+evidence_blockers=0
+plan_blockers=0
+real_execution_enabled=false
+real_execution_eligible=false
+```
+
+未发生回退。更新过程没有 reload/restart 任何服务；新的 root SSH 登录通过。两个既有域名的公网 HTTPS 与正确 Host/SNI 源站 HTTPS 均返回 200，表明本次两文件更新没有影响其源站路由。短时证据在 `2026-11-16T14:24:42Z` 失效，之后不得直接用于写入授权。

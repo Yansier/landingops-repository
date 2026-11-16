@@ -53,7 +53,7 @@
 
 Phase 1M-A.3 已证明：PHP-FPM 8.4.27 可由审计账号执行，旧失败来自禁用 glob 后仍使用 glob；Nginx vhost 目录为受保护的 `root:root 0600`；运行中的 MariaDB 是 `/www/server/mysql/bin/mariadbd` 10.11.10，但审计账号不能解析 `/proc/<pid>/exe`；宝塔 8.0.7 的当前固定来源是受保护的 `/www/server/panel/class/common.py`，旧 `data/version.pl` 不存在。详细退出码和证据见 [Phase 1M-A.3](PHASE_1M_A3.md)。
 
-本地已准备 root-only 脱敏摘要 v2 和 probe 兼容修复，但服务器组件尚未更新，因此不得把上述根因调查写成“四项 blocker 已在真实 collect 中消除”。必须另行批准组件更新、重新生成短时摘要，并重新 collect/verify/plan。
+上述段落记录更新前的根因调查状态。随后服务器两组件已在独立授权下完成更新；最终结果见文末“Phase 1M-A.3 最终真实验收”，不得用本段历史失败覆盖新的短时证据，也不得反向修改历史记录。
 
 该证据现已过期，只能作为本次验收记录，不能直接授权 Phase 1M-B。任何未来写入前必须重新 collect/verify，并继续保持 `real_execution_enabled=false` 直至获得独立审批。
 
@@ -62,3 +62,17 @@ Phase 1M-A.3 已证明：PHP-FPM 8.4.27 可由审计账号执行，旧失败来�
 模拟 Transport 已覆盖：错误指纹、错误目标、root/非 root、目录缺失/重叠、祖先链接、扩展缺失、Nginx 未知、磁盘不足、数据库身份不一致、过期/篡改证据、超时/部分失败、协议不匹配、命令注入、SCP/SFTP/TTY/转发边界、权限隔离及零写入。
 
 模拟成功仅证明采集器和证据契约行为，不代表真实服务器环境已经通过。
+
+## Phase 1M-A.3 最终真实验收
+
+2026-11-16 经独立授权，仅原子更新 `landingops-readonly-probe-v2` 和 `landingops-generate-site-summary`。更新前后的哈希、权限及 root-only 备份均已验证；未修改 wrapper、boundary checker、SSH 配置、账号、公钥或任何服务配置，未 reload/restart 服务。
+
+- `boundary_safe=true`；新的 root SSH 登录成功。
+- 四项修复 probe 及其余全部 probe 均 exit 0。
+- `/srv/landingops` 仍 absent；站点清单完整，31 个去重 root 与目标路径重叠为 0。
+- collect：`readonly_verified_with_pending_writes`，0 blockers。
+- verify：`verified_read_only_evidence`。
+- plan：`readonly_ready_for_manual_preparation`，0 blockers。
+- `real_execution_enabled=false`、`real_execution_eligible=false`。
+
+本次证据观察时间为 `2026-11-16T13:54:42Z`，失效时间为 `2026-11-16T14:24:42Z`。该结果完成 Phase 1M-A.3 环境验收，但不授权 Phase 1M-B 写入；失效后必须重新采集。

@@ -259,3 +259,9 @@ C20DD0FE6F30AF8F4161255D214537744C19B1C2CE94F596F0AF9E8BDD4840C2  landingops-gen
 ```
 
 停止条件：旧哈希不匹配、目标为链接、候选哈希不匹配、语法失败、摘要字段/权限/时效异常、boundary 非安全、root/FinalShell 异常或四项任一 probe 非零。回退只恢复两个已备份且身份明确的旧文件，并删除或恢复本次新摘要；不触碰其他文件，也不 reload SSH/Nginx/PHP-FPM/MariaDB。
+
+### 2026-11-16 实际更新记录
+
+操作者独立授权后，本节两文件更新成功执行。旧/新哈希、owner/mode、候选 `sh -n`、v2 摘要、`boundary_safe=true` 和新 root 登录全部通过；没有触发回退，没有 reload/restart 服务。真实 collect/verify/plan 分类分别为 `readonly_verified_with_pending_writes`、`verified_read_only_evidence`、`readonly_ready_for_manual_preparation`，证据和计划 blockers 均为 0。
+
+root-only 备份保留在 `/root/landingops-phase1ma3.UDvssiWh`。该目录只用于本次已验证旧文件和旧摘要的精确回退，不得作为通用发布目录。最新短时证据于 `2026-11-16T14:24:42Z` 失效；Phase 1M-B 前必须重新生成摘要和证据。
