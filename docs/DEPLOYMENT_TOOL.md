@@ -145,3 +145,9 @@ public 文件集合采用白名单：三个明确入口加带哈希的 Vue `asse
 禁止真实 SSH 写入、宝塔写入 API、DNS/SSL 修改、客户站点操作、生产数据库测试、全局服务重启以及删除未知文件。真实服务器首次安装必须等待 Phase 1M 的单独授权。
 
 Phase 1M-A 新增的真实 SSH 只读采集、签名证据和首次安装计划见 [Phase 1M-A 文档](PHASE_1M_A.md)。该入口与本页的手工 `doctor-facts` 不同，仍不提供任何远端写入能力。
+
+## 11. Phase 1M-B1 已准备环境
+
+真实服务器已在单独授权下完成平台专属非登录部署身份、`/srv/landingops` 目录树、空生产数据库、单库账号和 root-only 私有配置/初始备份准备。完整权限与验收证据见 [Phase 1M-B1 文档](PHASE_1M_B1.md)。
+
+现有 `bin/landingops-deploy init/update/rollback` 仍只能操作授权本地模拟沙箱，不能指向该生产目录。B2 必须另行实现并审核受限传输、manifest 校验、锁、root-owned 原子切换和健康回滚，禁止把 `SimulatedDeploymentExecutor` 改路径后直接用于生产。

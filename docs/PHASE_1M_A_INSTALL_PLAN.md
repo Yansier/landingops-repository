@@ -46,3 +46,9 @@ Phase 1M-A.3 最终只读计划分类已达到 `readonly_ready_for_manual_prepar
 `real_execution_enabled=false`
 
 `collector_write_operations_performed=false`
+
+## Phase 1M-B1 完成状态
+
+Phase 1M-B1 已在单独授权下完成专用部署身份、`/srv/landingops` 隔离目录树、空生产库、单库数据库账号、root-only 私有配置和初始备份准备，详见 [Phase 1M-B1 文档](PHASE_1M_B1.md)。
+
+该状态是 `environment_prepared`，不是平台已安装。真实传输协议、runtime 身份、恢复演练、Nginx vhost/TLS、生产迁移、超级管理员初始化与原子切换仍需 Phase 1M-B2 独立审批。
